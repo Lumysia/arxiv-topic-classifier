@@ -1,0 +1,31 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.py[cod]
+*.egg-info/
+.DS_Store
+
+# Local configuration and provider credentials
+.env
+.env.*
+*.env
+.opencode/
+AGENTS.md
+
+# Data, models, generated reports, caches, and course submission material
+data/
+models/
+artifacts/
+slides/
+*.zip
+*.pptx
+*.key
+*.pdf
+
+# Tool runtimes and local browser/office installs
+.cache/
+node_modules/
+tools/
+.lo-*/
