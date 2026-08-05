@@ -7,17 +7,19 @@ from typing import Any, cast
 import matplotlib
 import numpy as np
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    accuracy_score,
-    balanced_accuracy_score,
-    classification_report,
-    confusion_matrix,
-    f1_score,
-)
+from sklearn.metrics import classification_report, f1_score, hamming_loss
+from sklearn.multiclass import OneVsRestClassifier
+from sklearn.preprocessing import MultiLabelBinarizer
 
-from arxiv_topic_classifier.config import DEFAULT_EMBEDDING_MODEL, RANDOM_SEED, ProjectPaths
+from arxiv_topic_classifier.config import (
+    DEFAULT_EMBEDDING_MODEL,
+    RANDOM_SEED,
+    TARGET_CATEGORIES,
+    ProjectPaths,
+)
 from arxiv_topic_classifier.data import dataset_split, read_dataset
 from arxiv_topic_classifier.embeddings import EmbeddingHelper, default_embedding_helper
+from arxiv_topic_classifier.model import _prediction_matrix
 from arxiv_topic_classifier.schema import DatasetRow
 
 matplotlib.use("Agg")
@@ -25,27 +27,28 @@ from matplotlib import pyplot as plt
 
 
 def _evaluate_arrays(
-    truth: list[str], predictions: list[str], labels: list[str]
+    truth: np.ndarray, predictions: np.ndarray, labels: list[str]
 ) -> dict[str, Any]:
     return {
-        "accuracy": float(accuracy_score(truth, predictions)),
-        "balanced_accuracy": float(balanced_accuracy_score(truth, predictions)),
+        "exact_match_ratio": float(np.mean(np.all(truth == predictions, axis=1)))
+        if truth.size
+        else 0.0,
+        "hamming_loss": float(hamming_loss(truth, predictions)) if truth.size else 0.0,
         "macro_f1": float(f1_score(truth, predictions, average="macro", zero_division=0)),
+        "micro_f1": float(f1_score(truth, predictions, average="micro", zero_division=0)),
         "weighted_f1": float(f1_score(truth, predictions, average="weighted", zero_division=0)),
+        "samples_f1": float(f1_score(truth, predictions, average="samples", zero_division=0)),
         "classification_report": classification_report(
             truth,
             predictions,
-            labels=labels,
+            target_names=labels,
             output_dict=True,
             zero_division=0,
         ),
-        "confusion_matrix": confusion_matrix(truth, predictions, labels=labels).tolist(),
     }
 
 
-def _embed_rows(
-    helper: EmbeddingHelper, rows: list[DatasetRow], batch_size: int
-) -> np.ndarray:
+def _embed_rows(helper: EmbeddingHelper, rows: list[DatasetRow], batch_size: int) -> np.ndarray:
     embeddings = helper.embed([row.text for row in rows], batch_size=batch_size)
     if embeddings.shape[0] != len(rows):
         raise ValueError(
@@ -105,37 +108,30 @@ def run_representation_benchmark(
     test_rows = dataset_split(rows, "test")
     if not train_rows or not validation_rows or not test_rows:
         raise ValueError("Dataset must contain non-empty train, validation, and test splits.")
-    labels = sorted({row.label for row in rows})
+    labels = list(TARGET_CATEGORIES)
+    mlb = MultiLabelBinarizer(classes=labels)
+    train_targets = mlb.fit_transform([row.labels for row in train_rows])
     helper = embedding_helper or default_embedding_helper(paths, model_name)
     train_embeddings = _embed_rows(helper, train_rows, batch_size)
     validation_embeddings = _embed_rows(helper, validation_rows, batch_size)
     test_embeddings = _embed_rows(helper, test_rows, batch_size)
-    classifier = LogisticRegression(
-        C=1.0,
-        class_weight="balanced",
-        max_iter=1_000,
-        random_state=seed,
+    classifier = OneVsRestClassifier(
+        LogisticRegression(C=1.0, class_weight="balanced", max_iter=1_000, random_state=seed),
+        n_jobs=1,
     )
-    classifier.fit(train_embeddings, [row.label for row in train_rows])
-    validation_predictions = cast(
-        list[str], classifier.predict(validation_embeddings).tolist()
-    )
-    test_predictions = cast(list[str], classifier.predict(test_embeddings).tolist())
+    classifier.fit(train_embeddings, train_targets)
+    validation_probabilities = cast(np.ndarray, classifier.predict_proba(validation_embeddings))
+    test_probabilities = cast(np.ndarray, classifier.predict_proba(test_embeddings))
+    validation_predictions = _prediction_matrix(validation_probabilities, 0.35)
+    test_predictions = _prediction_matrix(test_probabilities, 0.35)
+    validation_truth = mlb.transform([row.labels for row in validation_rows])
+    test_truth = mlb.transform([row.labels for row in test_rows])
     summary: dict[str, Any] = {
         "generated_at_utc": datetime.now(UTC).isoformat(),
         "representation": f"{helper.model_name} dense embeddings",
         "model": helper.model_name,
-        "classifier": "multinomial logistic regression",
+        "classifier": "one-vs-rest logistic regression",
         "input_contract": "Abstract text only; title is metadata and is not embedded.",
-        "split_policy": (
-            "Embeddings and logistic classifier are fit on train rows only; validation is reported "
-            "for comparison; held-out test is evaluated once."
-        ),
-        "deployment_tradeoff": (
-            "The offline demo remains the selected TF-IDF pipeline because this semantic "
-            "benchmark depends on embedding-model network/cache availability and has a larger "
-            "runtime footprint."
-        ),
         "selected_for_deployment": False,
         "seed": seed,
         "row_counts": {
@@ -145,10 +141,8 @@ def run_representation_benchmark(
         },
         "embedding_cache_dir": str(helper.cache_dir),
         "labels": labels,
-        "validation": _evaluate_arrays(
-            [row.label for row in validation_rows], validation_predictions, labels
-        ),
-        "test": _evaluate_arrays([row.label for row in test_rows], test_predictions, labels),
+        "validation": _evaluate_arrays(validation_truth, validation_predictions, labels),
+        "test": _evaluate_arrays(test_truth, test_predictions, labels),
     }
     (paths.artifacts / "representation_benchmark.json").write_text(
         json.dumps(summary, indent=2) + "\n", encoding="utf-8"

@@ -17,7 +17,6 @@ from arxiv_topic_classifier.web import create_app, demo_abstract_hash, load_demo
 
 class FakeWebLLMClient:
     model = "fake-web-llm"
-    transport = "fake-transport"
 
     def __init__(self, label: str = "cs.CL", invalid: bool = False, fail: bool = False) -> None:
         self.label = label
@@ -30,14 +29,13 @@ class FakeWebLLMClient:
         if self.fail:
             raise RuntimeError("provider failed with SECRET_API_KEY and raw prompt body")
         del prompt
-        content = '{"label":"cs.UNKNOWN"}' if self.invalid else json.dumps(
-            {"label": self.label, "reason": "Synthetic web response."}
+        content = '{"labels":["cs.UNKNOWN"]}' if self.invalid else json.dumps(
+            {"labels": [self.label], "reason": "Synthetic web response."}
         )
         return LLMClientResponse(
             content=content,
             usage=LLMUsage(input_tokens=11, output_tokens=7, total_tokens=18),
             latency_seconds=0.02,
-            response_id="response-web-1",
         )
 
 
@@ -88,15 +86,14 @@ def _write_demo_cache(path: Path, abstract: str, label: str = "cs.CL") -> None:
                     {
                         "normalized_abstract": abstract,
                         "abstract_hash": demo_abstract_hash(abstract),
-                        "label": label,
+                        "labels": [label],
                         "reason": "Cached synthetic response.",
                         "valid_output": True,
                         "parse_error": None,
                         "model": "cached-fake-model",
-                        "transport": "cached-transport",
+                        "source": "Offline cache",
                         "latency_seconds": 1.23,
                         "usage": {"input_tokens": 12, "output_tokens": 6, "total_tokens": 18},
-                        "response_id": "cached-response-1",
                     }
                 ],
             }
@@ -108,16 +105,17 @@ def _write_demo_cache(path: Path, abstract: str, label: str = "cs.CL") -> None:
 def test_training_generates_real_artifacts(trained_project: ProjectPaths) -> None:
     metrics = json.loads((trained_project.artifacts / "metrics.json").read_text())
     assert metrics["selected_model"] in metrics["test"]
+    assert metrics["task"] == "official_arxiv_taxonomy_multilabel"
+    assert len(metrics["labels"]) == 155
     assert 0.0 <= metrics["test"][metrics["selected_model"]]["macro_f1"] <= 1.0
     assert trained_project.model.is_file()
     expected = [
         "class_metrics.csv",
-        "confusion_matrix.csv",
         "prediction_examples.json",
         "error_patterns.json",
         "evaluation_report.md",
         "figures/class_distribution.png",
-        "figures/confusion_matrix.png",
+        "figures/label_f1.png",
         "figures/model_comparison.png",
         "eda_summary.json",
         "figures/abstract_length_distributions.png",
@@ -128,9 +126,7 @@ def test_training_generates_real_artifacts(trained_project: ProjectPaths) -> Non
     eda = json.loads((trained_project.artifacts / "eda_summary.json").read_text())
     assert eda["input_contract"].startswith("Abstract text only")
     assert eda["top_discriminative_terms"]["fit_split"] == "train"
-    assert set(eda["top_discriminative_terms"]["terms_by_class"]) == set(
-        eda["abstract_word_counts"]["by_class"]
-    )
+    assert eda["official_label_count"] == 155
 
 
 def test_serialized_prediction_and_invalid_input(trained_project: ProjectPaths) -> None:
@@ -140,8 +136,9 @@ def test_serialized_prediction_and_invalid_input(trained_project: ProjectPaths) 
         "We study source code testing and debugging with automated software maintenance tools. "
         "The evaluation uses developer projects and reports reproducible software quality results.",
     )
-    assert result.label in artifact["labels"]
-    assert abs(sum(result.probabilities.values()) - 1.0) < 1e-8
+    assert result.top_label in artifact["labels"]
+    assert result.labels
+    assert all(0.0 <= value <= 1.0 for value in result.probabilities.values())
     with pytest.raises(TextValidationError):
         predict_abstract(artifact, "short")
 
@@ -161,7 +158,8 @@ def test_web_demo_smoke_and_negative_boundary(trained_project: ProjectPaths) -> 
         },
     )
     assert response.status_code == 200
-    assert "label" in response.get_json()
+    payload = response.get_json()
+    assert payload["top_label"] in payload["probabilities"]
     assert client.post("/api/predict", json={"abstract": 7}).status_code == 400
     assert client.post("/api/predict", json={}).status_code == 400
 
@@ -171,14 +169,13 @@ def test_compare_live_agreement_and_disagreement(trained_project: ProjectPaths) 
     agreeing_client = create_app(
         trained_project.root,
         llm_mode="live",
-        llm_transport="openai",
         llm_client=FakeWebLLMClient(label="cs.CL"),
     ).test_client()
     agreement_response = agreeing_client.post("/api/compare", json={"abstract": abstract})
     assert agreement_response.status_code == 200
     agreement_payload = agreement_response.get_json()
-    assert agreement_payload["classical"]["label"] == "cs.CL"
-    assert agreement_payload["llm"]["label"] == "cs.CL"
+    assert agreement_payload["classical"]["top_label"] == "cs.CL"
+    assert agreement_payload["llm"]["labels"] == ["cs.CL"]
     assert agreement_payload["llm"]["source_mode"] == "live"
     assert agreement_payload["agreement"] is True
     assert agreement_payload["agreement_status"] == "agree"
@@ -186,14 +183,13 @@ def test_compare_live_agreement_and_disagreement(trained_project: ProjectPaths) 
     disagreeing_client = create_app(
         trained_project.root,
         llm_mode="live",
-        llm_transport="openai",
         llm_client=FakeWebLLMClient(label="cs.RO"),
     ).test_client()
     disagreement_response = disagreeing_client.post("/api/compare", json={"abstract": abstract})
     assert disagreement_response.status_code == 200
     disagreement_payload = disagreement_response.get_json()
-    assert disagreement_payload["classical"]["label"] == "cs.CL"
-    assert disagreement_payload["llm"]["label"] == "cs.RO"
+    assert disagreement_payload["classical"]["top_label"] == "cs.CL"
+    assert disagreement_payload["llm"]["labels"] == ["cs.RO"]
     assert disagreement_payload["agreement"] is False
     assert disagreement_payload["agreement_status"] == "disagree"
 
@@ -202,16 +198,15 @@ def test_compare_live_invalid_llm_output_is_reported(trained_project: ProjectPat
     client = create_app(
         trained_project.root,
         llm_mode="live",
-        llm_transport="openai",
         llm_client=FakeWebLLMClient(invalid=True),
     ).test_client()
     response = client.post("/api/compare", json={"abstract": _language_abstract()})
     assert response.status_code == 200
     payload = response.get_json()
-    assert payload["classical"]["label"] == "cs.CL"
+    assert payload["classical"]["top_label"] == "cs.CL"
     assert payload["llm"]["valid_output"] is False
     assert payload["llm"]["status"] == "invalid_output"
-    assert payload["llm"]["parse_error"] == "Unknown or missing label."
+    assert payload["llm"]["parse_error"] == "labels must contain only known taxonomy IDs."
     assert payload["agreement"] is None
     assert payload["agreement_status"] == "llm_invalid_output"
 
@@ -226,7 +221,6 @@ def test_compare_live_failure_uses_exact_cache_fallback(
     client = create_app(
         trained_project.root,
         llm_mode="live-with-cache-fallback",
-        llm_transport="opencode",
         llm_client=fake_client,
         llm_cache_path=cache_path,
     ).test_client()
@@ -234,10 +228,10 @@ def test_compare_live_failure_uses_exact_cache_fallback(
     assert response.status_code == 200
     payload = response.get_json()
     assert fake_client.calls == 1
-    assert payload["classical"]["label"] == "cs.CL"
+    assert payload["classical"]["top_label"] == "cs.CL"
     assert payload["llm"]["source_mode"] == "cached"
     assert payload["llm"]["model"] == "cached-fake-model"
-    assert payload["llm"]["fallback_message"].startswith("Live LLM transport was unavailable")
+    assert payload["llm"]["fallback_message"].startswith("The live LLM service")
     assert "SECRET" not in json.dumps(payload)
     assert "raw prompt" not in json.dumps(payload)
 
@@ -247,7 +241,7 @@ def test_compare_offline_unknown_keeps_classical_result(trained_project: Project
     response = client.post("/api/compare", json={"abstract": _language_abstract()})
     assert response.status_code == 200
     payload = response.get_json()
-    assert payload["classical"]["label"] == "cs.CL"
+    assert payload["classical"]["top_label"] == "cs.CL"
     assert payload["llm"]["status"] == "unavailable"
     assert payload["llm"]["source_mode"] is None
     assert payload["agreement"] is None
@@ -265,7 +259,6 @@ def test_health_reports_modes_artifacts_without_llm_call(
     client = create_app(
         trained_project.root,
         llm_mode="live-with-cache-fallback",
-        llm_transport="opencode",
         llm_client=fake_client,
         llm_cache_path=cache_path,
     ).test_client()
@@ -276,7 +269,6 @@ def test_health_reports_modes_artifacts_without_llm_call(
     assert payload["classical"]["available"] is True
     assert payload["llm"] == {
         "mode": "live-with-cache-fallback",
-        "transport": "opencode",
         "client_configured": True,
     }
     assert payload["cache"]["available"] is True
@@ -285,7 +277,7 @@ def test_health_reports_modes_artifacts_without_llm_call(
     assert payload["artifacts"]["llm_test_metrics"] is True
 
 
-def test_demo_cache_loader_reports_malformed_and_skips_stale_entries(tmp_path: Path) -> None:
+def test_demo_cache_loader_rejects_old_single_label_cache(tmp_path: Path) -> None:
     malformed_path = tmp_path / "malformed.json"
     malformed_path.write_text("[]", encoding="utf-8")
     malformed = load_demo_llm_cache(malformed_path)
@@ -309,10 +301,9 @@ def test_demo_cache_loader_reports_malformed_and_skips_stale_entries(tmp_path: P
                         "valid_output": True,
                         "parse_error": None,
                         "model": "cached-fake-model",
-                        "transport": "cached-transport",
+                        "source": "Offline cache",
                         "latency_seconds": 1.0,
                         "usage": {"total_tokens": 10},
-                        "response_id": "cached-response-1",
                     }
                 ],
             }
@@ -320,9 +311,8 @@ def test_demo_cache_loader_reports_malformed_and_skips_stale_entries(tmp_path: P
         encoding="utf-8",
     )
     stale = load_demo_llm_cache(stale_path)
-    assert stale.available is True
-    assert stale.count == 0
-    assert stale.warnings == ("entry 0 skipped: abstract_hash does not match normalized_abstract",)
+    assert stale.available is False
+    assert stale.error == "Demo LLM cache artifact is malformed."
 
 
 def test_semantic_benchmark_schema_with_mocked_embeddings(trained_project: ProjectPaths) -> None:
@@ -332,7 +322,7 @@ def test_semantic_benchmark_schema_with_mocked_embeddings(trained_project: Proje
     )
     assert benchmark["selected_for_deployment"] is False
     assert benchmark["input_contract"].startswith("Abstract text only")
-    assert benchmark["row_counts"] == {"train": 84, "validation": 18, "test": 18}
+    assert benchmark["row_counts"] == {"train": 465, "validation": 155, "test": 155}
     assert 0.0 <= benchmark["validation"]["macro_f1"] <= 1.0
     assert 0.0 <= benchmark["test"]["macro_f1"] <= 1.0
     assert (trained_project.artifacts / "representation_benchmark.json").is_file()

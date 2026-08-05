@@ -3,18 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from arxiv_topic_classifier.taxonomy import load_taxonomy
+
 RANDOM_SEED = 5775
 TEXT_MIN_LENGTH = 80
 MAX_INPUT_LENGTH = 12_000
 DEFAULT_PER_CLASS = 1_000
 DEFAULT_AUDIT_SIZE = 120
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
-DEFAULT_LLM_MODEL = "deepseek-v4-flash"
-DEFAULT_OPENCODE_MODEL = "openai/gpt-5.6-sol"
+DEFAULT_LLM_MODEL = "gpt-5.6-sol"
 DEFAULT_LLM_TIMEOUT_SECONDS = 60.0
 DEFAULT_LLM_MAX_CONCURRENCY = 4
 DEFAULT_LLM_MAX_RETRIES = 3
 DEFAULT_LLM_USER_AGENT = "arxiv-topic-classifier/0.1"
+DEFAULT_PREDICTION_THRESHOLD = 0.35
 
 LLM_BASE_URL_ENV = "ARXIV_LLM_BASE_URL"
 LLM_API_KEY_ENV = "ARXIV_LLM_API_KEY"
@@ -24,42 +26,10 @@ LLM_MAX_CONCURRENCY_ENV = "ARXIV_LLM_MAX_CONCURRENCY"
 LLM_MAX_RETRIES_ENV = "ARXIV_LLM_MAX_RETRIES"
 LLM_USER_AGENT_ENV = "ARXIV_LLM_USER_AGENT"
 
-CATEGORY_DESCRIPTIONS: dict[str, str] = {
-    "cs.AI": (
-        "Artificial Intelligence: intelligent agents, reasoning, planning, knowledge "
-        "representation, search, decision making, multi-agent systems and general AI methods."
-    ),
-    "cs.CL": (
-        "Computation and Language: natural language processing, language models, machine "
-        "translation, text generation, linguistic analysis, speech and dialogue."
-    ),
-    "cs.CV": (
-        "Computer Vision and Pattern Recognition: image and video understanding, object "
-        "detection, segmentation, visual recognition, image generation and 3D vision."
-    ),
-    "cs.LG": (
-        "Machine Learning: supervised, unsupervised and reinforcement learning, neural network "
-        "optimization, generalization, probabilistic learning and learning theory."
-    ),
-    "cs.RO": (
-        "Robotics: robot perception, localization, mapping, motion planning, manipulation, "
-        "navigation, control and autonomous physical systems."
-    ),
-    "cs.SE": (
-        "Software Engineering: software development, testing, debugging, maintenance, program "
-        "analysis, requirements, software architecture and developer tools."
-    ),
-}
-
-CATEGORY_NAMES: dict[str, str] = {
-    "cs.AI": "Artificial Intelligence",
-    "cs.CL": "Computation and Language",
-    "cs.CV": "Computer Vision and Pattern Recognition",
-    "cs.LG": "Machine Learning",
-    "cs.RO": "Robotics",
-    "cs.SE": "Software Engineering",
-}
-TARGET_CATEGORIES = tuple(CATEGORY_DESCRIPTIONS)
+_TAXONOMY = load_taxonomy()
+CATEGORY_DESCRIPTIONS = _TAXONOMY.descriptions
+CATEGORY_NAMES = _TAXONOMY.names
+TARGET_CATEGORIES = _TAXONOMY.ids
 
 
 @dataclass(frozen=True)
@@ -83,8 +53,28 @@ class ProjectPaths:
         return self.artifacts / "cache"
 
     @property
+    def logs(self) -> Path:
+        return self.artifacts / "logs"
+
+    @property
+    def source_artifacts(self) -> Path:
+        return self.artifacts / "source"
+
+    @property
+    def raw(self) -> Path:
+        return self.root / "data" / "raw"
+
+    @property
+    def returns(self) -> Path:
+        return self.root / "archives"
+
+    @property
     def model(self) -> Path:
         return self.root / "models" / "arxiv_topic_pipeline.joblib"
+
+    @property
+    def model_manifest(self) -> Path:
+        return self.root / "models" / "arxiv_topic_pipeline.manifest.json"
 
     @property
     def dataset(self) -> Path:
@@ -93,6 +83,14 @@ class ProjectPaths:
     @property
     def profile(self) -> Path:
         return self.artifacts / "data_profile.json"
+
+    @property
+    def environment(self) -> Path:
+        return self.artifacts / "environment.json"
+
+    @property
+    def verification_report(self) -> Path:
+        return self.artifacts / "verification_report.json"
 
     def llm_metrics(self, split: str) -> Path:
         return self.artifacts / f"llm_{split}_metrics.json"
@@ -106,8 +104,8 @@ class ProjectPaths:
     def llm_class_metrics(self, split: str) -> Path:
         return self.artifacts / f"llm_{split}_class_metrics.csv"
 
-    def llm_confusion_matrix(self, split: str) -> Path:
-        return self.artifacts / f"llm_{split}_confusion_matrix.csv"
+    def llm_label_errors(self, split: str) -> Path:
+        return self.artifacts / f"llm_{split}_label_errors.csv"
 
     def llm_error_patterns(self, split: str) -> Path:
         return self.artifacts / f"llm_{split}_error_patterns.json"
@@ -115,8 +113,8 @@ class ProjectPaths:
     def llm_prediction_examples(self, split: str) -> Path:
         return self.artifacts / f"llm_{split}_prediction_examples.json"
 
-    def llm_confusion_figure(self, split: str) -> Path:
-        return self.figures / f"llm_{split}_confusion_matrix.png"
+    def llm_label_error_figure(self, split: str) -> Path:
+        return self.figures / f"llm_{split}_label_errors.png"
 
     @property
     def llm_audit_summary(self) -> Path:
@@ -135,5 +133,24 @@ class ProjectPaths:
         return cls(root=root.resolve())
 
     def create_output_dirs(self) -> None:
-        for path in (self.processed, self.artifacts, self.figures, self.cache, self.model.parent):
+        for path in (
+            self.processed,
+            self.artifacts,
+            self.figures,
+            self.cache,
+            self.logs,
+            self.source_artifacts,
+            self.raw,
+            self.returns,
+            self.model.parent,
+        ):
             path.mkdir(parents=True, exist_ok=True)
+
+    def relative_path(self, path: Path) -> str:
+        return path.resolve().relative_to(self.root).as_posix()
+
+    def artifact_path(self, path: Path) -> str:
+        try:
+            return self.relative_path(path)
+        except ValueError:
+            return path.name

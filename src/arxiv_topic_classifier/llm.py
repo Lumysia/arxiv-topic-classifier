@@ -29,7 +29,7 @@ from arxiv_topic_classifier.config import (
 )
 from arxiv_topic_classifier.schema import LLMAuditRecord, LLMParsedPrediction, LLMUsage
 
-TAXONOMY_PROMPT_VERSION = "taxonomy_json_v1"
+TAXONOMY_PROMPT_VERSION = "taxonomy_multilabel_json_v2"
 AUDIT_PROMPT_VERSION = "taxonomy_audit_json_v1"
 INVALID_LABEL = "__invalid__"
 
@@ -97,7 +97,6 @@ class LLMClientResponse:
     content: str
     usage: LLMUsage
     latency_seconds: float
-    response_id: str | None = None
 
 
 class LLMClient(Protocol):
@@ -182,7 +181,7 @@ def taxonomy_prompt_hash() -> str:
         {
             "version": TAXONOMY_PROMPT_VERSION,
             "labels": label_definition_payload(),
-            "output_schema": {"label": list(TARGET_CATEGORIES), "reason": "short string"},
+            "output_schema": {"labels": list(TARGET_CATEGORIES), "reason": "short string"},
         }
     )
 
@@ -209,11 +208,14 @@ def taxonomy_json_v1_prompt(abstract: str) -> LLMChatPrompt:
     )
     user = json.dumps(
         {
-            "task": "Choose the single best primary arXiv category for this abstract.",
+            "task": (
+                "Choose every applicable current official arXiv category for this abstract. "
+                "Use only labels from the supplied taxonomy and do not invent labels."
+            ),
             "labels": label_definition_payload(),
             "abstract": abstract,
             "output_json_schema": {
-                "label": "one of: " + ", ".join(TARGET_CATEGORIES),
+                "labels": "array of one or more labels from: " + ", ".join(TARGET_CATEGORIES),
                 "reason": "short reason based only on the abstract",
             },
         },
@@ -262,20 +264,25 @@ def parse_taxonomy_output(content: str) -> LLMParsedPrediction:
         payload = json.loads(content)
     except json.JSONDecodeError as error:
         return LLMParsedPrediction(
-            label=None, valid_output=False, error=f"Malformed JSON: {error.msg}"
+            labels=(), valid_output=False, error=f"Malformed JSON: {error.msg}"
         )
     if not isinstance(payload, dict):
         return LLMParsedPrediction(
-            label=None, valid_output=False, error="Output is not a JSON object."
+            labels=(), valid_output=False, error="Output is not a JSON object."
         )
-    label = payload.get("label")
-    if not isinstance(label, str) or label not in TARGET_CATEGORIES:
+    labels = payload.get("labels")
+    if not isinstance(labels, list) or not labels:
         return LLMParsedPrediction(
-            label=None, valid_output=False, error="Unknown or missing label."
+            labels=(), valid_output=False, error="Unknown or missing labels."
+        )
+    if any(not isinstance(label, str) or label not in TARGET_CATEGORIES for label in labels):
+        return LLMParsedPrediction(
+            labels=(), valid_output=False, error="labels must contain only known taxonomy IDs."
         )
     reason = payload.get("reason")
+    ordered = tuple(label for label in TARGET_CATEGORIES if label in set(labels))
     return LLMParsedPrediction(
-        label=label,
+        labels=ordered,
         valid_output=True,
         reason=reason if isinstance(reason, str) else None,
     )
@@ -316,8 +323,6 @@ def audit_valid_output(record: LLMAuditRecord) -> bool:
 
 
 class OpenAICompatibleChatClient:
-    transport = "openai-compatible"
-
     def __init__(
         self,
         config: LLMRuntimeConfig,
@@ -417,7 +422,6 @@ class OpenAICompatibleChatClient:
                 ),
             ),
             latency_seconds=latency_seconds,
-            response_id=payload.get("id") if isinstance(payload.get("id"), str) else None,
         )
 
 
