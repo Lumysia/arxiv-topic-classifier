@@ -99,7 +99,7 @@ class DemoLLMScope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidate_calls: int = Field(ge=0)
-    cached_examples: int = Field(ge=0)
+    packaged_examples: int = Field(ge=0)
     full_test_llm_run: bool
     classical_test_rows: int = Field(ge=0)
 
@@ -334,7 +334,7 @@ def _presentation_summary(
         return None
     if selection.llm_scope.classical_test_rows != metrics.row_counts.test:
         return None
-    if selection.llm_scope.cached_examples != len(selection.examples):
+    if selection.llm_scope.packaged_examples != len(selection.examples):
         return None
     if len(metrics.labels) != profile.category_design.official_label_count:
         return None

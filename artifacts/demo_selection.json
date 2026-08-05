@@ -1,0 +1,76 @@
+{
+  "policy": "Three documented held-out abstract excerpts chosen after six real candidate LLM calls: one exact agreement, one classical-exact/LLM-partial case, and one hard case where the LLM recovers a true label missed by the classical model. Demo examples are qualitative evidence, not aggregate LLM performance.",
+  "llm_scope": {
+    "candidate_calls": 6,
+    "packaged_examples": 3,
+    "full_test_llm_run": false,
+    "classical_test_rows": 22452
+  },
+  "examples": [
+    {
+      "key": "clear_agreement",
+      "display_label": "Clear agreement",
+      "arxiv_id": "2301.10122",
+      "actual_labels": [
+        "math.GT",
+        "math.SG"
+      ],
+      "classical_labels": [
+        "math.GT",
+        "math.SG"
+      ],
+      "llm_labels": [
+        "math.GT",
+        "math.SG"
+      ],
+      "outcome": "both_exact",
+      "normalized_abstract": "We consider the question of when the operation of contact surgery with positive surgery coefficient, along a knot $K$ in a contact 3-manifold $Y$, gives rise to a weakly fillable contact structure. We show that this happens if and only if $Y$ itself is weakly fillable, and $K$ is isotopic to the boundary of a properly embedded symplectic disk inside a filling of $Y$. Moreover, if $Y'$ is a contact",
+      "abstract_hash": "0bc1366dd27cd82cf58c0e44de36aa3a9f257864e827f1798243918c289cfd6e",
+      "title": "Fillable contact structures from positive surgery"
+    },
+    {
+      "key": "classical_complete_llm_partial",
+      "display_label": "Classical complete, LLM partial",
+      "arxiv_id": "2601.04433",
+      "actual_labels": [
+        "cs.IT",
+        "eess.SP",
+        "math.IT"
+      ],
+      "classical_labels": [
+        "cs.IT",
+        "eess.SP",
+        "math.IT"
+      ],
+      "llm_labels": [
+        "cs.IT",
+        "cs.NI",
+        "eess.SP"
+      ],
+      "outcome": "classical_exact_llm_partial",
+      "normalized_abstract": "The integration of multicarrier modulation and multiple-input-multiple-output (MIMO) is critical for reliable transmission of wireless signals in complex environments, which significantly improve spectrum efficiency. Existing studies have shown that popular orthogonal time frequency space (OTFS) and affine frequency division multiplexing (AFDM) offer significant advantages over orthogonal frequenc",
+      "abstract_hash": "e2835f24df520e2d4c245bc8775cbe4648bdcc2ae24afd9f57b15bb30185b638",
+      "title": "Achievable Rate and Coding Principle for MIMO Multicarrier Systems With Cross-Domain MAMP Receiver Over Doubly Selective Channels"
+    },
+    {
+      "key": "llm_partial_recovery",
+      "display_label": "LLM partial recovery",
+      "arxiv_id": "0711.2270",
+      "actual_labels": [
+        "cs.CL",
+        "cs.AI",
+        "q-bio.NC"
+      ],
+      "classical_labels": [
+        "cond-mat.other"
+      ],
+      "llm_labels": [
+        "cs.AI"
+      ],
+      "outcome": "llm_closer_than_classical",
+      "normalized_abstract": "A computer model of \"a sense of humour\" suggested previously [arXiv:0711.2058,0711.2061], relating the humorous effect with a specific malfunction in information processing, is given in somewhat different exposition. Psychological aspects of humour are elaborated more thoroughly. The mechanism of laughter is formulated on the more general level. Detailed discussion is presented for the higher leve",
+      "abstract_hash": "e44cde85d0be1dd2b6f63a6d1814d6fea6154d94f4c32c9e80c0e6ffadb33c21",
+      "title": "Can a Computer Laugh ?"
+    }
+  ]
+}
