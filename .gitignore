@@ -1,3 +1,4 @@
+# Python and local tooling
 .venv/
 __pycache__/
 .pytest_cache/
@@ -5,27 +6,66 @@ __pycache__/
 .ruff_cache/
 *.py[cod]
 *.egg-info/
-.DS_Store
+.cache/
+.uv-cache/
 
-# Local configuration and provider credentials
+# OS, editor, and local runtime state
+.DS_Store
+.idea/
+.vscode/
+*.log
+*.pid
+.lo-*/
+node_modules/
+
+# Secrets and local configuration
 .env
 .env.*
-*.env
-.opencode/
-AGENTS.md
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.token
+*secret*
+*credentials*
+kaggle.json
 
-# Data, models, generated reports, caches, and course submission material
+# Data, models, and generated artifacts
 data/
 models/
 artifacts/
+archives/
+dist/
+build/
+htmlcov/
+site/
+
+# Presentations, screenshots, reports, and submission material
 slides/
-*.zip
+presentations/
+screenshots/
+*.pdf
+*.ppt
 *.pptx
 *.key
-*.pdf
+*_DRAFT.md
+SUBMISSION_*
+RETURN_*
 
-# Tool runtimes and local browser/office installs
-.cache/
-node_modules/
+# Local launchers, QA tooling, and browser/PDF automation
+*.command
 tools/
-.lo-*/
+browser-qa/
+playwright-report/
+test-results/
+.playwright/
+
+# Archives and generated packages
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar

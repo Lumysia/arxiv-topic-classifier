@@ -3,72 +3,148 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Classical ML vs LLM arXiv Classifier</title>
+  <title>Official arXiv Multilabel Classifier</title>
   <style>
     :root {
       color-scheme: light;
-      --ink: #172033;
-      --muted: #5e6a7d;
-      --paper: #f5f7fb;
+      --ink: #14213d;
+      --muted: #61708a;
+      --paper: #f4f7fb;
       --panel: #ffffff;
-      --line: #d8dee9;
-      --teal: #0f766e;
-      --violet: #6d28d9;
-      --orange: #c2410c;
-      --red: #b91c1c;
-      --green: #15803d;
+      --line: #dbe3ee;
+      --navy: #19324d;
+      --teal: #087f76;
+      --teal-soft: #e8f7f4;
+      --violet: #6842c2;
+      --violet-soft: #f1edff;
+      --amber: #b45309;
+      --amber-soft: #fff8e8;
+      --red: #b42318;
+      --green: #16794b;
+      --shadow: 0 18px 48px rgba(20, 33, 61, .08);
     }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: var(--paper); color: var(--ink); }
-    main { width: min(1180px, 94vw); margin: auto; padding: 28px 0 44px; }
-    header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: end; margin-bottom: 18px; }
-    h1 { margin: 0 0 8px; font-size: clamp(1.55rem, 3vw, 2.6rem); line-height: 1.08; letter-spacing: 0; }
-    h2 { margin: 0; font-size: 1.1rem; letter-spacing: 0; }
-    h3 { margin: 0 0 10px; font-size: .95rem; letter-spacing: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 8% 0%, rgba(8, 127, 118, .09), transparent 31rem),
+        radial-gradient(circle at 95% 8%, rgba(104, 66, 194, .08), transparent 28rem),
+        var(--paper);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { width: min(1220px, 94vw); margin: auto; padding: 30px 0 48px; }
+    header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: end; }
+    .eyebrow { color: var(--teal); font-size: .78rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { max-width: 880px; margin: 8px 0 10px; font-size: clamp(2rem, 4vw, 3.7rem); line-height: 1.02; letter-spacing: -.045em; }
+    h2 { margin: 0; font-size: clamp(1.25rem, 2vw, 1.65rem); letter-spacing: -.025em; }
+    h3 { margin: 0; font-size: 1rem; }
     p { color: var(--muted); line-height: 1.55; margin: 8px 0; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     .meta { color: var(--muted); font-size: .9rem; }
-    .runtime { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-    .badge { display: inline-flex; align-items: center; min-height: 26px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; background: #fff; color: #344155; font-size: .78rem; font-weight: 700; }
-    .badge.live { border-color: #99f6e4; color: #115e59; background: #ecfdf5; }
-    .badge.cached { border-color: #fed7aa; color: #9a3412; background: #fff7ed; }
-    .badge.unavailable, .badge.invalid { border-color: #fecaca; color: var(--red); background: #fff1f2; }
-    .badge.agree { border-color: #bbf7d0; color: var(--green); background: #f0fdf4; }
-    .badge.disagree { border-color: #fed7aa; color: var(--orange); background: #fff7ed; }
-    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px; box-shadow: 0 16px 40px rgba(23, 32, 51, .08); }
-    .console { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(280px, .55fr); gap: 16px; align-items: start; }
-    .examples { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 12px; }
-    label { display: inline-block; font-weight: 800; margin-bottom: 8px; }
-    textarea { width: 100%; min-height: 220px; resize: vertical; border: 1px solid #b9c2d2; border-radius: 8px; padding: 14px; color: var(--ink); background: #fbfcff; font: inherit; line-height: 1.5; }
-    textarea:focus, button:focus-visible { outline: 3px solid #a7f3d0; outline-offset: 2px; }
-    button { border: 1px solid transparent; border-radius: 8px; padding: 10px 14px; font: inherit; font-weight: 800; cursor: pointer; }
-    button.primary { min-width: 160px; background: var(--teal); color: #fff; }
-    button.secondary { background: #eef2ff; color: #3730a3; border-color: #c7d2fe; }
+    .runtime { display: flex; max-width: 360px; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 10px;
+      background: #fff;
+      color: #34445e;
+      font-size: .76rem;
+      font-weight: 850;
+      letter-spacing: .015em;
+    }
+    .badge.live, .badge.local, .badge.agree { border-color: #9ce6d6; color: #0d6b48; background: #edfcf7; }
+    .badge.cached { border-color: #f2cc8f; color: #914b06; background: var(--amber-soft); }
+    .badge.unavailable, .badge.invalid { border-color: #efc5be; color: var(--red); background: #fff3f1; }
+    .badge.disagree { border-color: #d7c7ff; color: #5730ab; background: var(--violet-soft); }
+    .panel { background: rgba(255, 255, 255, .96); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
+    .section-heading { display: flex; justify-content: space-between; gap: 20px; align-items: end; margin: 30px 0 12px; }
+    .section-heading p { max-width: 680px; margin: 0; }
+    .hero-stats { display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr; gap: 12px; margin-top: 24px; }
+    .stat { min-height: 124px; padding: 18px; }
+    .stat-label { color: var(--muted); font-size: .76rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+    .stat-value { margin: 8px 0 4px; color: var(--navy); font-size: clamp(1.65rem, 3vw, 2.35rem); font-weight: 900; letter-spacing: -.04em; }
+    .stat-detail { color: var(--muted); font-size: .84rem; line-height: 1.4; }
+    .pipeline { display: grid; grid-template-columns: repeat(5, 1fr); overflow: hidden; }
+    .stage { position: relative; min-height: 205px; padding: 20px; border-right: 1px solid var(--line); }
+    .stage:last-child { border-right: 0; }
+    .stage-number { display: inline-grid; width: 30px; height: 30px; place-items: center; margin-bottom: 18px; border-radius: 9px; background: var(--teal-soft); color: var(--teal); font-weight: 900; }
+    .stage:nth-child(even) .stage-number { background: var(--violet-soft); color: var(--violet); }
+    .stage p { margin-bottom: 0; font-size: .88rem; }
+    .scope-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .scope-card { padding: 20px; }
+    .scope-card.classical { border-top: 5px solid var(--teal); }
+    .scope-card.llm { border-top: 5px solid var(--violet); }
+    .scope-kicker { margin-bottom: 9px; color: var(--muted); font-size: .75rem; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
+    .scope-big { margin: 4px 0; font-size: 1.28rem; font-weight: 900; letter-spacing: -.02em; }
+    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 12px; }
+    .metric { padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: #fbfcfe; }
+    .metric strong { display: block; margin-top: 5px; color: var(--navy); font-size: 1.35rem; }
+    .method-note { display: grid; grid-template-columns: auto 1fr; gap: 11px; align-items: start; margin-top: 13px; padding: 12px; border-radius: 11px; background: var(--violet-soft); color: #4c2b8f; font-size: .88rem; line-height: 1.5; }
+    .console { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, .65fr); gap: 14px; align-items: start; }
+    form.panel, .taxonomy-card { padding: 20px; }
+    .console-intro { margin-top: 0; }
+    .examples { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    label { display: inline-block; font-weight: 900; margin-bottom: 8px; }
+    textarea { width: 100%; min-height: 205px; resize: vertical; border: 1px solid #b9c6d8; border-radius: 12px; padding: 14px; color: var(--ink); background: #fbfdff; font: inherit; line-height: 1.5; }
+    textarea:focus, button:focus-visible, summary:focus-visible { outline: 3px solid #8ddfd1; outline-offset: 2px; }
+    button { border: 1px solid transparent; border-radius: 10px; padding: 10px 14px; font: inherit; font-weight: 850; cursor: pointer; }
+    button.primary { min-width: 178px; background: var(--teal); color: #fff; box-shadow: 0 8px 18px rgba(8, 127, 118, .2); }
+    button.secondary { background: #f4f1ff; color: #5231a6; border-color: #d8ccfa; }
+    button.secondary:hover { background: #ebe5ff; }
     button:disabled { cursor: wait; opacity: .65; }
-    .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 12px; }
     #status { color: var(--muted); min-height: 24px; }
-    .taxonomy { display: grid; gap: 8px; margin-top: 10px; }
-    .taxon { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; padding: 8px 0; border-top: 1px solid #edf0f5; }
-    .taxon code { color: var(--violet); font-weight: 900; }
-    .taxon span { color: var(--muted); font-size: .9rem; }
-    .agreement { display: none; margin: 16px 0; text-align: center; }
-    .results { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: stretch; }
-    .result-card { display: grid; gap: 12px; min-height: 320px; }
-    .card-head { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
-    .label-line { font-size: 1.5rem; font-weight: 900; letter-spacing: 0; }
-    .label-line small { display: block; color: var(--muted); font-size: .95rem; font-weight: 700; margin-top: 3px; }
-    .kv { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 8px; color: var(--muted); font-size: .92rem; }
-    .kv strong { color: var(--ink); }
+    #preset-context { min-height: 22px; color: #5730ab; font-size: .86rem; font-weight: 700; }
+    details summary { cursor: pointer; font-weight: 900; list-style: none; }
+    details summary::-webkit-details-marker { display: none; }
+    details summary::after { content: "+"; float: right; color: var(--teal); font-size: 1.4rem; }
+    details[open] summary::after { content: "−"; }
+    .taxonomy-scroll { max-height: 360px; overflow: auto; margin-top: 12px; padding-right: 8px; }
+    .taxonomy { display: grid; }
+    .taxon { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 8px; padding: 7px 0; border-top: 1px solid #edf1f6; }
+    .taxon code { color: var(--violet); font-size: .82rem; font-weight: 900; }
+    .taxon span { color: var(--muted); font-size: .82rem; }
+    .agreement { display: none; margin: 16px 0 0; text-align: center; }
+    .results { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch; margin-top: 14px; }
+    .result-card { display: grid; align-content: start; gap: 12px; min-height: 340px; padding: 20px; }
+    .card-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+    .card-head p { margin-bottom: 0; }
+    .label-line { font-size: 1.4rem; font-weight: 900; letter-spacing: -.02em; }
+    .label-line small { display: block; color: var(--muted); font-size: .92rem; font-weight: 700; margin-top: 3px; }
+    .label-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .label-chip { border-radius: 7px; padding: 5px 8px; background: var(--teal-soft); color: #0a615b; font: 800 .8rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .llm-chip { background: var(--violet-soft); color: #5730ab; }
+    .kv { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 7px 10px; color: var(--muted); font-size: .86rem; }
+    .kv strong { color: var(--ink); overflow-wrap: anywhere; }
     .bars { display: grid; gap: 7px; }
-    .prob-row { display: grid; grid-template-columns: 58px minmax(0, 1fr) 54px; gap: 8px; align-items: center; font-size: .86rem; }
-    .bar { height: 9px; border-radius: 999px; background: #e8edf5; overflow: hidden; }
+    .prob-row { display: grid; grid-template-columns: 104px minmax(0, 1fr) 54px; gap: 8px; align-items: center; font-size: .82rem; }
+    .bar { height: 8px; border-radius: 999px; background: #e8edf5; overflow: hidden; }
     .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--teal), var(--violet)); }
-    .note { border-left: 4px solid var(--orange); background: #fff7ed; color: #7c2d12; padding: 10px 12px; border-radius: 6px; }
-    .error { border-left-color: var(--red); background: #fff1f2; color: var(--red); }
-    footer { color: var(--muted); margin-top: 22px; font-size: .86rem; }
-    @media (max-width: 880px) {
+    .note { border-left: 4px solid var(--amber); background: var(--amber-soft); color: #7d4308; padding: 11px 12px; border-radius: 8px; font-size: .88rem; line-height: 1.45; }
+    .error { border-left-color: var(--red); background: #fff3f1; color: var(--red); }
+    .cached-callout { border-left-color: var(--violet); background: var(--violet-soft); color: #4c2b8f; font-weight: 800; }
+    .summary-unavailable { margin-top: 24px; padding: 16px; }
+    footer { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: .84rem; line-height: 1.55; }
+    @media (max-width: 980px) {
       header, .console, .results { grid-template-columns: 1fr; }
-      .runtime { justify-content: flex-start; }
+      .runtime { max-width: none; justify-content: flex-start; }
+      .hero-stats { grid-template-columns: 1fr 1fr; }
+      .pipeline { grid-template-columns: 1fr 1fr; }
+      .stage { border-bottom: 1px solid var(--line); }
+      .stage:last-child { grid-column: 1 / -1; }
       .result-card { min-height: 0; }
+    }
+    @media (max-width: 680px) {
+      main { width: min(94vw, 560px); padding-top: 20px; }
+      .hero-stats, .scope-grid, .metrics, .pipeline { grid-template-columns: 1fr; }
+      .stage, .stage:last-child { grid-column: auto; border-right: 0; }
+      .section-heading { display: block; }
+      .section-heading p { margin-top: 7px; }
     }
   </style>
 </head>
@@ -76,40 +152,133 @@
 <main>
   <header>
     <div>
-      <h1>Classical TF-IDF vs prompt-based generative LLM for six-class arXiv abstract classification</h1>
-      <div class="meta">ENGR 5775G course project | Abstract-only input</div>
+      <div class="eyebrow">arXiv abstract classification</div>
+      <h1>Official arXiv taxonomy, from raw metadata to live multilabel prediction.</h1>
+      <div class="meta">Abstract-only input · Reproducible local inference</div>
     </div>
     <div class="runtime" aria-label="Runtime configuration">
-      <span class="badge">LLM mode: {{ llm_mode }}</span>
-      <span class="badge">Transport: {{ llm_transport }}</span>
-      <span class="badge {{ 'cached' if cache_available else 'unavailable' }}">Cache: {{ cache_count }} exact examples</span>
+      <span class="badge local">Classical model: live local</span>
+      <span class="badge">LLM runtime: {{ llm_mode }}</span>
+      <span class="badge cached">{{ cache_count }} cached LLM excerpts</span>
     </div>
   </header>
 
+  {% if summary %}
+  <section class="hero-stats" aria-label="Dataset summary">
+    <article class="panel stat">
+      <div class="stat-label">Bounded sample</div>
+      <div class="stat-value">{{ "{:,}".format(summary.sample.total_rows) }}</div>
+      <div class="stat-detail">records from {{ summary.source.dataset }}</div>
+    </article>
+    <article class="panel stat">
+      <div class="stat-label">Development split</div>
+      <div class="stat-value">{{ "{:,}".format(summary.row_counts.train) }}</div>
+      <div class="stat-detail">train · {{ "{:,}".format(summary.row_counts.validation) }} validation</div>
+    </article>
+    <article class="panel stat">
+      <div class="stat-label">Held-out evaluation</div>
+      <div class="stat-value">{{ "{:,}".format(summary.row_counts.test) }}</div>
+      <div class="stat-detail">test rows · classical aggregate metrics</div>
+    </article>
+    <article class="panel stat">
+      <div class="stat-label">Official task</div>
+      <div class="stat-value">{{ summary.category_design.official_label_count }} labels</div>
+      <div class="stat-detail">multilabel prediction across the official arXiv taxonomy</div>
+    </article>
+  </section>
+
+  <div class="section-heading">
+    <div><div class="eyebrow">Functional pipeline</div><h2>Data engineering → model selection → local inference</h2></div>
+    <p>Displayed counts and classical metrics are read from locally generated profile and metrics artifacts when present.</p>
+  </div>
+  <section class="panel pipeline" aria-label="Classification pipeline">
+    <article class="stage">
+      <div class="stage-number">1</div>
+      <h3>Source</h3>
+      <p>{{ summary.source.dataset }} (<code>{{ summary.source.kaggle_slug }}</code>), {{ summary.source.license }}.</p>
+    </article>
+    <article class="stage">
+      <div class="stage-number">2</div>
+      <h3>Prepare labels</h3>
+      <p>Whitespace-normalized abstracts only. Complete source categories are intersected with the official 155-label taxonomy; titles are excluded from model input.</p>
+    </article>
+    <article class="stage">
+      <div class="stage-number">3</div>
+      <h3>Control leakage</h3>
+      <p>Version-aware arXiv IDs and normalized-content hashes stay in one deterministic split: {{ summary.sample.duplicate_ids_across_splits }} duplicate IDs across splits and {{ summary.sample.duplicate_content_across_splits }} duplicate abstracts across splits.</p>
+    </article>
+    <article class="stage">
+      <div class="stage-number">4</div>
+      <h3>Select classical model</h3>
+      <p>Train-only unigram/bigram TF-IDF; validation macro-F1 selects one-vs-rest logistic regression. The held-out test split is used once.</p>
+    </article>
+    <article class="stage">
+      <div class="stage-number">5</div>
+      <h3>AI-assisted method</h3>
+      <p>A fixed taxonomy-aware JSON prompt produces multilabel candidates that can be cached for local comparison.</p>
+    </article>
+  </section>
+
+  <div class="section-heading">
+    <div><div class="eyebrow">Evaluation</div><h2>Classical metrics and LLM examples</h2></div>
+  </div>
+  <section class="scope-grid" aria-label="Evaluation scopes">
+    <article class="panel scope-card classical">
+      <div class="scope-kicker">Classical evaluation · aggregate</div>
+      <div class="scope-big">Aggregate metrics from all {{ "{:,}".format(summary.llm_scope.classical_test_rows) }} held-out test rows</div>
+      <p>{{ summary.selection_rule }}</p>
+      <div class="metrics" aria-label="Full-test classical aggregate metrics">
+        <div class="metric"><span class="meta">Macro F1</span><strong>{{ "%.4f"|format(summary.test_metrics.macro_f1) }}</strong></div>
+        <div class="metric"><span class="meta">Micro F1</span><strong>{{ "%.4f"|format(summary.test_metrics.micro_f1) }}</strong></div>
+        <div class="metric"><span class="meta">Hamming loss</span><strong>{{ "%.5f"|format(summary.test_metrics.hamming_loss) }}</strong></div>
+        <div class="metric"><span class="meta">Exact match</span><strong>{{ "%.5f"|format(summary.test_metrics.exact_match_ratio) }}</strong></div>
+      </div>
+    </article>
+    <article class="panel scope-card llm">
+      <div class="scope-kicker">Prompt LLM · qualitative demo scope</div>
+      <div class="scope-big">{{ summary.llm_scope.candidate_calls }} real candidate calls · {{ summary.llm_scope.cached_examples }} representative cached excerpts</div>
+      <div class="method-note"><strong>Method</strong><span>Same abstract-only input and 155-label taxonomy, with a fixed JSON prompt and exact-hash caching.</span></div>
+    </article>
+  </section>
+  {% else %}
+  <section class="panel summary-unavailable note error" role="alert">The local metrics, data profile, and comparison-scope artifacts are unavailable or inconsistent.</section>
+  {% endif %}
+
+  <div class="section-heading" id="demo">
+    <div><div class="eyebrow">Comparison console</div><h2>Run the local model; inspect exact cached LLM evidence</h2></div>
+    <p>Any valid abstract gets a live classical prediction. Offline LLM output appears only for an exact cached excerpt match.</p>
+  </div>
   <section class="console" aria-label="Comparison console">
     <form id="compare-form" class="panel">
+      <p class="console-intro">Choose a documented held-out excerpt or paste an arbitrary abstract. Presets are marked cached after comparison.</p>
       <label for="abstract">Abstract</label>
-      <textarea id="abstract" maxlength="{{ max_length }}" required placeholder="Paste an abstract for manual comparison."></textarea>
-      <div class="examples" aria-label="Held-out demo examples">
+      <textarea id="abstract" maxlength="{{ max_length }}" required placeholder="Paste an abstract for a live local classical prediction."></textarea>
+      <div class="examples" aria-label="Three representative cached demo excerpts">
         {% for example in demo_examples %}
         <button type="button" class="secondary" data-example-index="{{ loop.index0 }}">{{ example.display_label }}</button>
         {% else %}
-        <span class="meta">No packaged held-out examples are available. Manual input is enabled.</span>
+        <span class="meta">No cached held-out examples are available. Manual input is enabled.</span>
         {% endfor %}
       </div>
+      <div id="preset-context" aria-live="polite"></div>
       <div class="actions">
-        <button id="compare" class="primary" type="submit">Compare models</button>
+        <button id="compare" class="primary" type="submit">Compare predictions</button>
         <span id="status" role="status" aria-live="polite"></span>
       </div>
     </form>
 
-    <aside class="panel" aria-label="Six-label taxonomy">
-      <h2>Six-label taxonomy</h2>
-      <div class="taxonomy">
-        {% for item in taxonomy %}
-        <div class="taxon"><code>{{ item.label }}</code><span>{{ item.name }}</span></div>
-        {% endfor %}
-      </div>
+    <aside class="panel taxonomy-card" aria-label="Official 155-label arXiv taxonomy">
+      <details open>
+        <summary>Official 155-label taxonomy</summary>
+        <p>All labels remain available to both classifiers. Scroll to inspect the complete bundled taxonomy.</p>
+        <div class="taxonomy-scroll">
+          <div class="taxonomy">
+            {% for item in taxonomy %}
+            <div class="taxon"><code>{{ item.label }}</code><span>{{ item.name }}</span></div>
+            {% endfor %}
+          </div>
+        </div>
+      </details>
     </aside>
   </section>
 
@@ -120,36 +289,34 @@
       <div class="card-head">
         <div>
           <h2 id="classical-title">Classical ML</h2>
-          <p>TF-IDF plus logistic regression. Offline, cheap, and reproducible.</p>
+          <p>Selected TF-IDF one-vs-rest logistic regression, executed locally now.</p>
         </div>
-        <span class="badge">local</span>
+        <span class="badge local">LIVE LOCAL</span>
       </div>
-      <div id="classical-result" class="meta">Run a comparison to see the classical prediction.</div>
+      <div id="classical-result" class="meta">Run a comparison to see selected labels and the top per-label probabilities.</div>
     </article>
 
     <article class="panel result-card" aria-labelledby="llm-title">
       <div class="card-head">
         <div>
           <h2 id="llm-title">Prompt LLM</h2>
-          <p>Prompted generative classifier. No calibrated confidence.</p>
         </div>
-        <span id="llm-source" class="badge">pending</span>
+        <span id="llm-source" class="badge">WAITING</span>
       </div>
-      <div id="llm-result" class="meta">Run a comparison to see the LLM prediction or fallback state.</div>
+      <div id="llm-result" class="meta">A cached response is shown only after an exact normalized-abstract match.</div>
     </article>
   </section>
 
-  <footer>Classical probabilities come from the serialized model artifact. LLM responses are live only when the selected runtime mode and credentials allow it; cached responses are exact-abstract demo fallbacks and are marked as cached.</footer>
 </main>
 
 <script>
-const taxonomy = {{ taxonomy|tojson }};
 const examples = {{ demo_examples|tojson }};
 
 const form = document.getElementById('compare-form');
 const abstractInput = document.getElementById('abstract');
 const compareButton = document.getElementById('compare');
 const statusEl = document.getElementById('status');
+const presetContextEl = document.getElementById('preset-context');
 const agreementEl = document.getElementById('agreement');
 const classicalEl = document.getElementById('classical-result');
 const llmEl = document.getElementById('llm-result');
@@ -160,19 +327,25 @@ document.querySelectorAll('[data-example-index]').forEach((button) => {
     const example = examples[Number(button.dataset.exampleIndex)];
     if (!example) return;
     abstractInput.value = example.normalized_abstract;
+    presetContextEl.textContent = `Held-out arXiv ${example.arxiv_id} · known labels: ${example.actual_labels.join(', ')} · cached excerpt`;
     abstractInput.focus();
   });
+});
+
+abstractInput.addEventListener('input', () => {
+  const exactPreset = examples.find((example) => example.normalized_abstract === abstractInput.value.trim().replace(/\s+/g, ' '));
+  if (!exactPreset) presetContextEl.textContent = 'Manual input · live local classical prediction only unless it exactly matches a cached excerpt.';
 });
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   compareButton.disabled = true;
-  statusEl.textContent = 'Comparing models. The LLM may take several seconds.';
+  statusEl.textContent = 'Running the local model and checking the exact offline cache…';
   agreementEl.style.display = 'none';
-  classicalEl.textContent = 'Running classical model...';
-  llmEl.textContent = 'Waiting for LLM result...';
+  classicalEl.textContent = 'Running local classical inference…';
+  llmEl.textContent = 'Checking for an exact cached excerpt…';
   llmSourceEl.className = 'badge';
-  llmSourceEl.textContent = 'pending';
+  llmSourceEl.textContent = 'CHECKING';
   try {
     const response = await fetch('/api/compare', {
       method: 'POST',
@@ -182,11 +355,11 @@ form.addEventListener('submit', async (event) => {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Comparison failed.');
     renderComparison(data);
-    statusEl.textContent = `Completed in ${formatSeconds(data.total_latency_seconds)}.`;
+    statusEl.textContent = `Local comparison completed in ${formatSeconds(data.total_latency_seconds)}.`;
   } catch (error) {
     statusEl.textContent = '';
     classicalEl.innerHTML = `<div class="note error" role="alert">${escapeHtml(error.message)}</div>`;
-    llmEl.textContent = 'No LLM request was completed.';
+    llmEl.textContent = 'No cache lookup result is available.';
   } finally {
     compareButton.disabled = false;
   }
@@ -198,51 +371,56 @@ function renderComparison(data) {
   renderAgreement(data.agreement, data.agreement_status);
   const source = data.llm.source_mode || data.llm.status;
   llmSourceEl.className = `badge ${source}`;
-  llmSourceEl.textContent = source;
+  llmSourceEl.textContent = source === 'cached' ? 'CACHED EXCERPT' : 'NO CACHE MATCH';
 }
 
 function renderClassical(result) {
-  const bars = Object.entries(result.probabilities).map(([label, value]) => `
+  const bars = result.ranked.slice(0, 10).map((item) => `
     <div class="prob-row">
-      <strong>${escapeHtml(label)}</strong>
-      <div class="bar" aria-hidden="true"><i style="width:${Math.max(0, Math.min(100, value * 100)).toFixed(1)}%"></i></div>
-      <span>${formatPercent(value)}</span>
+      <strong>${escapeHtml(item.label)}</strong>
+      <div class="bar" aria-hidden="true"><i style="width:${Math.max(0, Math.min(100, item.probability * 100)).toFixed(1)}%"></i></div>
+      <span>${formatPercent(item.probability)}</span>
     </div>`).join('');
+  const chips = result.labels.map((label) => `<span class="label-chip">${escapeHtml(label)}</span>`).join('');
   return `
-    <div class="label-line">${escapeHtml(result.label)}<small>${escapeHtml(result.category_name)}</small></div>
-    <div class="kv"><span>Confidence</span><strong>${formatPercent(result.confidence)}</strong><span>Latency</span><strong>${formatSeconds(result.latency_seconds)}</strong></div>
-    <div class="bars" aria-label="Class probabilities">${bars}</div>`;
+    <div class="label-line">${escapeHtml(result.top_label)}<small>${escapeHtml(result.top_category_name)} · highest per-label probability</small></div>
+    <div class="label-chips" aria-label="Selected classical labels">${chips}</div>
+    <div class="kv"><span>Top probability</span><strong>${formatPercent(result.top_probability)}</strong><span>Decision threshold</span><strong>${formatPercent(result.threshold)}</strong><span>Current latency</span><strong>${formatSeconds(result.latency_seconds)}</strong></div>
+    <div><h3>Top 10 of 155 probabilities</h3><div class="bars">${bars}</div></div>`;
 }
 
 function renderLLM(result) {
   if (result.status === 'unavailable') {
-    return `<div class="note error" role="alert">${escapeHtml(result.unavailable_reason || 'LLM unavailable.')}</div><p>No calibrated confidence.</p>`;
+    return `<div class="note">${escapeHtml(result.unavailable_reason || 'No exact cached LLM response is available.')}</div>`;
   }
-  const label = result.label ? `${escapeHtml(result.label)}<small>${escapeHtml(result.category_name || '')}</small>` : 'Invalid output';
+  const chips = result.labels.length
+    ? result.labels.map((label) => `<span class="label-chip llm-chip">${escapeHtml(label)}</span>`).join('')
+    : '<span class="meta">Invalid output</span>';
   const fallback = result.fallback_message ? `<div class="note">${escapeHtml(result.fallback_message)}</div>` : '';
   const parse = result.parse_error ? `<div class="note error" role="alert">${escapeHtml(result.parse_error)}</div>` : '';
   return `
-    <div class="label-line">${label}</div>
+    <div class="note cached-callout">CACHED LLM RESPONSE · exact excerpt match</div>
+    <div class="label-chips" aria-label="Cached LLM labels">${chips}</div>
     <p>${escapeHtml(result.reason || 'No model-generated reason available.')}</p>
     ${fallback}${parse}
     <div class="kv">
-      <span>Model</span><strong>${escapeHtml(result.model || 'n/a')}</strong>
-      <span>Transport</span><strong>${escapeHtml(result.transport || 'n/a')}</strong>
-      <span>Latency</span><strong>${formatSeconds(result.latency_seconds)}</strong>
-      <span>Tokens</span><strong>${formatTokens(result.usage)}</strong>
-      <span>Response ID</span><strong>${escapeHtml(result.response_id || 'n/a')}</strong>
-      <span>Confidence</span><strong>No calibrated confidence</strong>
+      <span>Recorded model</span><strong>${escapeHtml(result.model || 'n/a')}</strong>
+      <span>Recorded source</span><strong>${escapeHtml(result.source || 'n/a')}</strong>
+      <span>Recorded latency</span><strong>${formatSeconds(result.latency_seconds)}</strong>
+      <span>Recorded tokens</span><strong>${formatTokens(result.usage)}</strong>
     </div>`;
 }
 
-function renderAgreement(agreement, status) {
+function renderAgreement(agreement, comparisonStatus) {
   agreementEl.style.display = 'block';
   if (agreement === true) {
-    agreementEl.innerHTML = '<span class="badge agree">Models agree</span>';
+    agreementEl.innerHTML = '<span class="badge agree">Exact label-set agreement on this cached excerpt</span>';
   } else if (agreement === false) {
-    agreementEl.innerHTML = '<span class="badge disagree">Models disagree</span>';
+    agreementEl.innerHTML = '<span class="badge disagree">Different label sets on this cached excerpt</span>';
+  } else if (comparisonStatus === 'llm_unavailable') {
+    agreementEl.innerHTML = '<span class="badge">Classical-only result · no exact cached LLM excerpt</span>';
   } else {
-    agreementEl.innerHTML = `<span class="badge unavailable">${escapeHtml(status.replaceAll('_', ' '))}</span>`;
+    agreementEl.innerHTML = `<span class="badge unavailable">${escapeHtml(comparisonStatus.replaceAll('_', ' '))}</span>`;
   }
 }
 
@@ -261,7 +439,7 @@ function formatTokens(usage) {
 }
 
 function escapeHtml(value) {
-  return String(value).replace(/[&<>'"]/g, (char) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'}[char]));
+  return String(value).replace(/[&<>'"]/g, (character) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'}[character]));
 }
 </script>
 </body>

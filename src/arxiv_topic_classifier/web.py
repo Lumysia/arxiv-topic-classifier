@@ -29,7 +29,6 @@ from arxiv_topic_classifier.schema import LLMUsage, PredictionResult
 from arxiv_topic_classifier.text import TextValidationError, validate_prediction_text
 
 LLMMode = Literal["offline", "live", "live-with-cache-fallback"]
-LLMTransport = Literal["openai", "opencode"]
 LLMSourceMode = Literal["live", "cached"]
 
 DEMO_LLM_CACHE_FILENAME = "demo_llm_cache.json"
@@ -37,7 +36,6 @@ DEMO_SELECTION_FILENAME = "demo_selection.json"
 DEMO_LLM_CACHE_FORMAT_VERSION = 1
 
 _LLM_MODES = {"offline", "live", "live-with-cache-fallback"}
-_LLM_TRANSPORTS = {"openai", "opencode"}
 
 
 def _typed_route[ViewFunction: Callable[..., Any]](
@@ -51,15 +49,14 @@ class DemoLLMCacheEntry(BaseModel):
 
     normalized_abstract: str
     abstract_hash: str
-    label: str | None
+    labels: tuple[str, ...]
     reason: str | None = None
     valid_output: bool
     parse_error: str | None = None
     model: str
-    transport: str
+    source: str
     latency_seconds: float
     usage: LLMUsage = Field(default_factory=LLMUsage)
-    response_id: str | None = None
 
 
 class DemoLLMCacheFile(BaseModel):
@@ -90,18 +87,28 @@ class DemoSelectionExample(BaseModel):
     key: str
     display_label: str
     arxiv_id: str
-    actual_label: str
-    classical_label: str
-    llm_label: str | None
+    actual_labels: tuple[str, ...]
+    classical_labels: tuple[str, ...]
+    llm_labels: tuple[str, ...]
     outcome: str
     normalized_abstract: str
     abstract_hash: str
+
+
+class DemoLLMScope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_calls: int = Field(ge=0)
+    cached_examples: int = Field(ge=0)
+    full_test_llm_run: bool
+    classical_test_rows: int = Field(ge=0)
 
 
 class DemoSelectionFile(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     policy: str
+    llm_scope: DemoLLMScope
     examples: list[DemoSelectionExample]
 
 
@@ -110,8 +117,82 @@ class LoadedDemoSelection:
     path: Path
     available: bool
     examples: tuple[DemoSelectionExample, ...]
+    llm_scope: DemoLLMScope | None = None
     warnings: tuple[str, ...] = ()
     error: str | None = None
+
+
+class DemoSplitCounts(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    train: int = Field(ge=0)
+    validation: int = Field(ge=0)
+    test: int = Field(ge=0)
+
+
+class DemoAggregateMetrics(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    macro_f1: float = Field(ge=0.0, le=1.0)
+    micro_f1: float = Field(ge=0.0, le=1.0)
+    hamming_loss: float = Field(ge=0.0, le=1.0)
+    exact_match_ratio: float = Field(ge=0.0, le=1.0)
+
+
+class DemoMetricsArtifact(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    task: str
+    labels: tuple[str, ...]
+    row_counts: DemoSplitCounts
+    selected_model: str
+    selection_rule: str
+    test: dict[str, DemoAggregateMetrics]
+
+
+class DemoSourceProfile(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    dataset: str
+    kaggle_slug: str
+    license: str
+
+
+class DemoCategoryDesign(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    formulation: str
+    label_rule: str
+    official_label_count: int = Field(ge=0)
+
+
+class DemoSampleProfile(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    total_rows: int = Field(ge=0)
+    split_counts: DemoSplitCounts
+    duplicate_ids_across_splits: int = Field(ge=0)
+    duplicate_content_across_splits: int = Field(ge=0)
+
+
+class DemoDataProfileArtifact(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    source: DemoSourceProfile
+    category_design: DemoCategoryDesign
+    sample: DemoSampleProfile
+
+
+@dataclass(frozen=True)
+class DemoPresentationSummary:
+    source: DemoSourceProfile
+    category_design: DemoCategoryDesign
+    sample: DemoSampleProfile
+    row_counts: DemoSplitCounts
+    selected_model: str
+    selection_rule: str
+    test_metrics: DemoAggregateMetrics
+    llm_scope: DemoLLMScope
 
 
 def demo_abstract_hash(normalized_abstract: str) -> str:
@@ -158,7 +239,7 @@ def load_demo_llm_cache(path: Path) -> LoadedDemoLLMCache:
                 f"entry {index} skipped: abstract_hash does not match normalized_abstract"
             )
             continue
-        if entry.valid_output and entry.label not in TARGET_CATEGORIES:
+        if entry.valid_output and any(label not in TARGET_CATEGORIES for label in entry.labels):
             warnings.append(f"entry {index} skipped: valid output has an unknown label")
             continue
         if entry.abstract_hash in entries_by_hash:
@@ -202,8 +283,8 @@ def load_demo_selection(path: Path, limit: int = 3) -> LoadedDemoSelection:
                 f"example {index} skipped: abstract_hash does not match normalized_abstract"
             )
             continue
-        if example.actual_label not in TARGET_CATEGORIES:
-            warnings.append(f"example {index} skipped: unknown actual_label")
+        if any(label not in TARGET_CATEGORIES for label in example.actual_labels):
+            warnings.append(f"example {index} skipped: unknown actual_labels")
             continue
         if example.abstract_hash in seen_hashes:
             warnings.append(f"example {index} skipped: duplicate abstract_hash")
@@ -216,29 +297,69 @@ def load_demo_selection(path: Path, limit: int = 3) -> LoadedDemoSelection:
         path=path,
         available=True,
         examples=tuple(examples),
+        llm_scope=selection_file.llm_scope,
         warnings=tuple(warnings),
     )
 
 
-def _load_json(path: Path, default: Any) -> Any:
+def _load_json(path: Path) -> dict[str, Any] | None:
     if not path.is_file():
-        return default
-    return json.loads(path.read_text(encoding="utf-8"))
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return cast(dict[str, Any], payload) if isinstance(payload, dict) else None
+
+
+def _presentation_summary(
+    metrics_path: Path,
+    profile_path: Path,
+    selection: LoadedDemoSelection,
+) -> DemoPresentationSummary | None:
+    metrics_payload = _load_json(metrics_path)
+    profile_payload = _load_json(profile_path)
+    if metrics_payload is None or profile_payload is None or selection.llm_scope is None:
+        return None
+    try:
+        metrics = DemoMetricsArtifact.model_validate(metrics_payload)
+        profile = DemoDataProfileArtifact.model_validate(profile_payload)
+    except ValidationError:
+        return None
+
+    selected_metrics = metrics.test.get(metrics.selected_model)
+    if selected_metrics is None:
+        return None
+    if metrics.row_counts != profile.sample.split_counts:
+        return None
+    if selection.llm_scope.classical_test_rows != metrics.row_counts.test:
+        return None
+    if selection.llm_scope.cached_examples != len(selection.examples):
+        return None
+    if len(metrics.labels) != profile.category_design.official_label_count:
+        return None
+    return DemoPresentationSummary(
+        source=profile.source,
+        category_design=profile.category_design,
+        sample=profile.sample,
+        row_counts=metrics.row_counts,
+        selected_model=metrics.selected_model,
+        selection_rule=metrics.selection_rule,
+        test_metrics=selected_metrics,
+        llm_scope=selection.llm_scope,
+    )
 
 
 def create_app(
     root: Path,
     *,
     llm_mode: LLMMode = "offline",
-    llm_transport: LLMTransport = "openai",
     llm_client: LLMClient | None = None,
     llm_cache_path: Path | None = None,
     demo_selection_path: Path | None = None,
 ) -> Flask:
     if llm_mode not in _LLM_MODES:
         raise ValueError(f"Unsupported LLM mode: {llm_mode}")
-    if llm_transport not in _LLM_TRANSPORTS:
-        raise ValueError(f"Unsupported LLM transport: {llm_transport}")
     if llm_mode in {"live", "live-with-cache-fallback"} and llm_client is None:
         raise ValueError("A configured LLM client is required for live LLM modes.")
 
@@ -253,18 +374,16 @@ def create_app(
 
     @_typed_route(app.get("/"))
     def index() -> str:
-        metrics = _load_json(paths.artifacts / "metrics.json", {})
-        profile = _load_json(paths.profile, {})
-        audit = _load_json(paths.artifacts / "ai_audit_summary.json", {})
         return render_template(
             "index.html",
-            metrics=metrics,
-            profile=profile,
-            audit=audit,
+            summary=_presentation_summary(
+                paths.artifacts / "metrics.json",
+                paths.profile,
+                selection,
+            ),
             max_length=MAX_INPUT_LENGTH,
             taxonomy=_taxonomy_payload(),
             llm_mode=llm_mode,
-            llm_transport=llm_transport,
             cache_available=cache.available,
             cache_count=cache.count,
             demo_examples=[example.model_dump() for example in selection.examples],
@@ -288,7 +407,6 @@ def create_app(
                     },
                     "llm": {
                         "mode": llm_mode,
-                        "transport": llm_transport,
                         "client_configured": llm_client is not None,
                     },
                     "cache": _cache_health(cache),
@@ -329,11 +447,10 @@ def create_app(
         llm = _llm_compare_result(
             abstract=abstract,
             mode=llm_mode,
-            configured_transport=llm_transport,
             client=llm_client,
             cache=cache,
         )
-        agreement = _agreement_status(classical.label, llm)
+        agreement = _agreement_status(classical.labels, llm)
         return cast(
             Response,
             jsonify(
@@ -375,6 +492,7 @@ def _selection_health(selection: LoadedDemoSelection) -> dict[str, Any]:
         "path": str(selection.path),
         "available": selection.available,
         "count": len(selection.examples),
+        "llm_scope": selection.llm_scope.model_dump() if selection.llm_scope is not None else None,
         "error": selection.error,
         "warnings": list(selection.warnings),
     }
@@ -393,11 +511,14 @@ def _classical_result(
     classical: PredictionResult, selected_model: str, latency_seconds: float
 ) -> dict[str, Any]:
     return {
-        "label": classical.label,
-        "category_name": classical.category_name,
-        "confidence": classical.confidence,
+        "labels": classical.labels,
+        "top_label": classical.top_label,
+        "top_category_name": classical.top_category_name,
+        "top_probability": classical.top_probability,
+        "threshold": classical.threshold,
         "probabilities": classical.probabilities,
-        "probability_type": "logistic_regression_predict_proba",
+        "ranked": [item.model_dump() for item in classical.ranked],
+        "probability_type": "one_vs_rest_predict_proba",
         "model": selected_model,
         "latency_seconds": latency_seconds,
     }
@@ -407,14 +528,13 @@ def _llm_compare_result(
     *,
     abstract: str,
     mode: LLMMode,
-    configured_transport: LLMTransport,
     client: LLMClient | None,
     cache: LoadedDemoLLMCache,
 ) -> dict[str, Any]:
     if mode == "offline":
-        return _cached_or_unavailable(abstract, cache, configured_transport)
+        return _cached_or_unavailable(abstract, cache)
     if client is None:
-        return _llm_unavailable(configured_transport, "Live LLM client is not configured.")
+        return _llm_unavailable("Live LLM client is not configured.")
 
     try:
         return _live_llm_result(abstract, client)
@@ -425,35 +545,32 @@ def _llm_compare_result(
                 return _cache_entry_result(
                     cached,
                     fallback_message=(
-                        "Live LLM transport was unavailable; an exact cached demo response "
+                        "The live LLM service was unavailable; an exact cached demo response "
                         "is shown."
                     ),
                 )
-        return _llm_unavailable(configured_transport, "Live LLM transport is unavailable.")
+        return _llm_unavailable("The live LLM service is unavailable.")
 
 
 def _live_llm_result(abstract: str, client: LLMClient) -> dict[str, Any]:
     response = client.complete(taxonomy_json_v1_prompt(abstract))
     parsed = parse_taxonomy_output(response.content)
     return _llm_result(
-        label=parsed.label,
+        labels=parsed.labels,
         reason=parsed.reason,
         valid_output=parsed.valid_output,
         parse_error=parsed.error,
         model=client.model,
-        transport=_client_transport(client),
+        source="Live API",
         latency_seconds=response.latency_seconds,
         usage=response.usage,
-        response_id=response.response_id,
         source_mode="live",
         fallback_message=None,
         unavailable_reason=None,
     )
 
 
-def _cached_or_unavailable(
-    abstract: str, cache: LoadedDemoLLMCache, configured_transport: LLMTransport
-) -> dict[str, Any]:
+def _cached_or_unavailable(abstract: str, cache: LoadedDemoLLMCache) -> dict[str, Any]:
     cached = _cache_lookup(abstract, cache)
     if cached is not None:
         return _cache_entry_result(cached, fallback_message=None)
@@ -461,7 +578,7 @@ def _cached_or_unavailable(
         reason = "No exact cached LLM response exists for this normalized abstract."
     else:
         reason = cache.error or "Demo LLM cache is unavailable."
-    return _llm_unavailable(configured_transport, reason)
+    return _llm_unavailable(reason)
 
 
 def _cache_lookup(abstract: str, cache: LoadedDemoLLMCache) -> DemoLLMCacheEntry | None:
@@ -470,15 +587,14 @@ def _cache_lookup(abstract: str, cache: LoadedDemoLLMCache) -> DemoLLMCacheEntry
 
 def _cache_entry_result(entry: DemoLLMCacheEntry, fallback_message: str | None) -> dict[str, Any]:
     return _llm_result(
-        label=entry.label,
+        labels=entry.labels,
         reason=entry.reason,
         valid_output=entry.valid_output,
         parse_error=entry.parse_error,
         model=entry.model,
-        transport=entry.transport,
+        source=entry.source,
         latency_seconds=entry.latency_seconds,
         usage=entry.usage,
-        response_id=entry.response_id,
         source_mode="cached",
         fallback_message=fallback_message,
         unavailable_reason=None,
@@ -487,30 +603,28 @@ def _cache_entry_result(entry: DemoLLMCacheEntry, fallback_message: str | None) 
 
 def _llm_result(
     *,
-    label: str | None,
+    labels: tuple[str, ...],
     reason: str | None,
     valid_output: bool,
     parse_error: str | None,
     model: str | None,
-    transport: str,
+    source: str | None,
     latency_seconds: float | None,
     usage: LLMUsage,
-    response_id: str | None,
     source_mode: LLMSourceMode,
     fallback_message: str | None,
     unavailable_reason: str | None,
 ) -> dict[str, Any]:
     return {
-        "label": label,
-        "category_name": CATEGORY_NAMES.get(label) if label is not None else None,
+        "labels": list(labels),
+        "category_names": {label: CATEGORY_NAMES[label] for label in labels},
         "reason": reason,
         "valid_output": valid_output,
         "parse_error": parse_error,
         "model": model,
-        "transport": transport,
+        "source": source,
         "latency_seconds": latency_seconds,
         "usage": usage.model_dump(),
-        "response_id": response_id,
         "source_mode": source_mode,
         "status": "ok" if valid_output else "invalid_output",
         "fallback_message": fallback_message,
@@ -518,18 +632,17 @@ def _llm_result(
     }
 
 
-def _llm_unavailable(transport: str, reason: str) -> dict[str, Any]:
+def _llm_unavailable(reason: str) -> dict[str, Any]:
     return {
-        "label": None,
-        "category_name": None,
+        "labels": [],
+        "category_names": {},
         "reason": None,
         "valid_output": False,
         "parse_error": None,
         "model": None,
-        "transport": transport,
+        "source": None,
         "latency_seconds": None,
         "usage": LLMUsage().model_dump(),
-        "response_id": None,
         "source_mode": None,
         "status": "unavailable",
         "fallback_message": None,
@@ -537,15 +650,10 @@ def _llm_unavailable(transport: str, reason: str) -> dict[str, Any]:
     }
 
 
-def _client_transport(client: LLMClient) -> str:
-    raw_value = getattr(client, "transport", None)
-    return raw_value if isinstance(raw_value, str) else "injected"
-
-
-def _agreement_status(classical_label: str, llm: dict[str, Any]) -> tuple[bool | None, str]:
-    llm_label = llm.get("label")
-    if llm.get("valid_output") is True and isinstance(llm_label, str):
-        agreement = classical_label == llm_label
+def _agreement_status(classical_labels: list[str], llm: dict[str, Any]) -> tuple[bool | None, str]:
+    llm_labels = llm.get("labels")
+    if llm.get("valid_output") is True and isinstance(llm_labels, list):
+        agreement = set(classical_labels) == set(llm_labels)
         return agreement, "agree" if agreement else "disagree"
     if llm.get("status") == "unavailable":
         return None, "llm_unavailable"

@@ -30,18 +30,28 @@ class DatasetRow(BaseModel):
     title: str
     abstract: str
     text: str
-    label: str
+    labels: tuple[str, ...]
     categories: str
     year: int | None
     split: Split
     content_hash: str
 
 
-class PredictionResult(BaseModel):
+class LabelProbability(BaseModel):
     label: str
     category_name: str
-    confidence: float
+    probability: float
+    selected: bool
+
+
+class PredictionResult(BaseModel):
+    labels: list[str]
+    top_label: str
+    top_category_name: str
+    top_probability: float
+    threshold: float
     probabilities: dict[str, float]
+    ranked: list[LabelProbability]
 
 
 class LLMUsage(BaseModel):
@@ -55,7 +65,7 @@ class LLMUsage(BaseModel):
 
 
 class LLMParsedPrediction(BaseModel):
-    label: str | None
+    labels: tuple[str, ...]
     valid_output: bool
     reason: str | None = None
     error: str | None = None
@@ -69,15 +79,14 @@ class LLMEvaluationRecord(BaseModel):
     model: str
     prompt_version: str
     prompt_hash: str
-    actual_label: str
-    predicted_label: str | None
+    actual_labels: tuple[str, ...]
+    predicted_labels: tuple[str, ...]
     valid_output: bool
-    correct: bool
+    exact_match: bool
     reason: str | None = None
     parse_error: str | None = None
     latency_seconds: float
     usage: LLMUsage
-    response_id: str | None = None
 
 
 class LLMAuditRecord(BaseModel):
@@ -100,4 +109,3 @@ class LLMAuditRecord(BaseModel):
     label_mutated: Literal[False] = False
     latency_seconds: float
     usage: LLMUsage
-    response_id: str | None = None

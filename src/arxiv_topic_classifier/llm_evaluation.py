@@ -14,12 +14,12 @@ from typing import Any, cast
 
 import matplotlib
 import numpy as np
-from sklearn.metrics import accuracy_score, classification_report, f1_score
+from sklearn.metrics import classification_report, f1_score, hamming_loss, jaccard_score
+from sklearn.preprocessing import MultiLabelBinarizer
 
 from arxiv_topic_classifier.config import CATEGORY_NAMES, TARGET_CATEGORIES, ProjectPaths
 from arxiv_topic_classifier.data import dataset_split, read_dataset
 from arxiv_topic_classifier.llm import (
-    INVALID_LABEL,
     LLMChatPrompt,
     LLMClient,
     LLMClientResponse,
@@ -126,7 +126,7 @@ def _classify_row(row: DatasetRow, client: LLMClient, split: EvaluationSplit) ->
     prompt = taxonomy_json_v1_prompt(row.text)
     response = client.complete(prompt)
     parsed = parse_taxonomy_output(response.content)
-    correct = parsed.valid_output and parsed.label == row.label
+    exact_match = parsed.valid_output and set(parsed.labels) == set(row.labels)
     record = LLMEvaluationRecord(
         cache_key=_cache_key(row, client.model, prompt),
         arxiv_id=row.arxiv_id,
@@ -135,15 +135,14 @@ def _classify_row(row: DatasetRow, client: LLMClient, split: EvaluationSplit) ->
         model=client.model,
         prompt_version=prompt.version,
         prompt_hash=prompt.prompt_hash,
-        actual_label=row.label,
-        predicted_label=parsed.label,
+        actual_labels=row.labels,
+        predicted_labels=parsed.labels,
         valid_output=parsed.valid_output,
-        correct=correct,
+        exact_match=exact_match,
         reason=parsed.reason,
         parse_error=parsed.error,
         latency_seconds=response.latency_seconds,
         usage=response.usage,
-        response_id=response.response_id,
     )
     return _CompletedLLMRow(record=record, raw_response=response.content)
 
@@ -151,32 +150,46 @@ def _classify_row(row: DatasetRow, client: LLMClient, split: EvaluationSplit) ->
 def _metrics(
     records: list[LLMEvaluationRecord], labels: list[str], cache_hits: int
 ) -> dict[str, Any]:
-    truth = [record.actual_label for record in records]
-    predictions = [
-        record.predicted_label if record.valid_output and record.predicted_label else INVALID_LABEL
-        for record in records
-    ]
+    mlb = MultiLabelBinarizer(classes=labels)
+    truth = mlb.fit_transform([record.actual_labels for record in records])
+    predictions = mlb.transform(
+        [record.predicted_labels if record.valid_output else () for record in records]
+    )
     report = classification_report(
         truth,
         predictions,
-        labels=labels,
+        target_names=labels,
         output_dict=True,
         zero_division=0,
     )
-    invalid_count = sum(1 for prediction in predictions if prediction == INVALID_LABEL)
+    invalid_count = sum(1 for record in records if not record.valid_output)
     latencies = [record.latency_seconds for record in records]
     total_rows = len(records)
-    recalls = [cast(float, cast(dict[str, Any], report[label])["recall"]) for label in labels]
     return {
-        "accuracy": float(accuracy_score(truth, predictions)) if records else 0.0,
-        "balanced_accuracy": float(sum(recalls) / len(recalls)) if recalls else 0.0,
-        "macro_f1": float(
-            f1_score(truth, predictions, labels=labels, average="macro", zero_division=0)
+        "exact_match_ratio": float(np.mean(np.all(truth == predictions, axis=1)))
+        if records
+        else 0.0,
+        "hamming_loss": float(hamming_loss(truth, predictions)) if records else 0.0,
+        "jaccard_samples": float(
+            jaccard_score(truth, predictions, average="samples", zero_division=0)
         )
         if records
         else 0.0,
+        "macro_f1": float(
+            f1_score(truth, predictions, average="macro", zero_division=0)
+        )
+        if records
+        else 0.0,
+        "micro_f1": float(f1_score(truth, predictions, average="micro", zero_division=0))
+        if records
+        else 0.0,
         "weighted_f1": float(
-            f1_score(truth, predictions, labels=labels, average="weighted", zero_division=0)
+            f1_score(truth, predictions, average="weighted", zero_division=0)
+        )
+        if records
+        else 0.0,
+        "samples_f1": float(
+            f1_score(truth, predictions, average="samples", zero_division=0)
         )
         if records
         else 0.0,
@@ -222,11 +235,6 @@ def _reported_cost_total(records: list[LLMEvaluationRecord]) -> float | None:
     return float(sum(value for value in values if value is not None))
 
 
-def _transport_name(client: LLMClient) -> str:
-    value = getattr(client, "transport", None)
-    return value if isinstance(value, str) else "openai-compatible"
-
-
 def _write_class_metrics(
     report: dict[str, Any], labels: list[str], destination: Path
 ) -> None:
@@ -251,58 +259,47 @@ def _write_class_metrics(
             )
 
 
-def _confusion_counts(
-    records: list[LLMEvaluationRecord], labels: list[str]
-) -> tuple[list[str], list[list[int]]]:
-    include_invalid = any(not record.valid_output for record in records)
-    columns = [*labels, INVALID_LABEL] if include_invalid else labels
-    matrix: list[list[int]] = []
-    for actual in labels:
-        row_counts: list[int] = []
-        actual_records = [record for record in records if record.actual_label == actual]
-        for predicted in columns:
-            row_counts.append(
-                sum(
-                    1
-                    for record in actual_records
-                    if (
-                        record.predicted_label
-                        if record.valid_output and record.predicted_label is not None
-                        else INVALID_LABEL
-                    )
-                    == predicted
-                )
-            )
-        matrix.append(row_counts)
-    return columns, matrix
-
-
-def _write_confusion_csv(
-    columns: list[str], matrix: list[list[int]], labels: list[str], destination: Path
+def _write_label_error_csv(
+    records: list[LLMEvaluationRecord], labels: list[str], destination: Path
 ) -> None:
     with destination.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle, lineterminator="\n")
-        writer.writerow(["actual/predicted", *columns])
-        for label, row in zip(labels, matrix, strict=True):
-            writer.writerow([label, *row])
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=("label", "true_positive", "false_positive", "false_negative"),
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        for label in labels:
+            tp = fp = fn = 0
+            for record in records:
+                actual = set(record.actual_labels)
+                predicted = set(record.predicted_labels) if record.valid_output else set()
+                tp += int(label in actual and label in predicted)
+                fp += int(label not in actual and label in predicted)
+                fn += int(label in actual and label not in predicted)
+            writer.writerow(
+                {"label": label, "true_positive": tp, "false_positive": fp, "false_negative": fn}
+            )
 
 
-def _plot_confusion(
-    columns: list[str], matrix: list[list[int]], labels: list[str], destination: Path
-) -> None:
-    values = np.asarray(matrix, dtype=float)
-    row_sums = values.sum(axis=1, keepdims=True)
-    normalized = np.divide(values, row_sums, out=np.zeros_like(values), where=row_sums != 0)
-    plt.figure(figsize=(7.2, 5.2))
-    plt.imshow(normalized, cmap="Blues", vmin=0, vmax=1)
-    plt.xticks(np.arange(len(columns)), columns, rotation=30, ha="right")
-    plt.yticks(np.arange(len(labels)), labels)
-    plt.xlabel("Predicted")
-    plt.ylabel("Actual")
-    plt.title("Prompt LLM normalized confusion matrix")
-    for row_index, row in enumerate(normalized):
-        for column_index, value in enumerate(row):
-            plt.text(column_index, row_index, f"{value:.2f}", ha="center", va="center")
+def _plot_label_error_counts(records: list[LLMEvaluationRecord], destination: Path) -> None:
+    counts: Counter[str] = Counter()
+    for record in records:
+        actual = set(record.actual_labels)
+        predicted = set(record.predicted_labels) if record.valid_output else set()
+        counts.update(actual ^ predicted)
+    plotted = counts.most_common(40)
+    plt.figure(figsize=(14, 5.2))
+    plt.bar(np.arange(len(plotted)), [count for _, count in plotted], color="#2563eb")
+    plt.xticks(
+        np.arange(len(plotted)),
+        [label for label, _ in plotted],
+        rotation=60,
+        ha="right",
+        fontsize="x-small",
+    )
+    plt.ylabel("Mismatched rows")
+    plt.title("Prompt LLM label mismatch counts")
     plt.tight_layout()
     plt.savefig(destination, dpi=180, bbox_inches="tight")
     plt.close()
@@ -311,16 +308,15 @@ def _plot_confusion(
 def _error_patterns(records: list[LLMEvaluationRecord]) -> list[dict[str, Any]]:
     counts: Counter[tuple[str, str]] = Counter()
     for record in records:
-        predicted = (
-            record.predicted_label
-            if record.valid_output and record.predicted_label is not None
-            else INVALID_LABEL
-        )
-        if predicted != record.actual_label:
-            counts[(record.actual_label, predicted)] += 1
+        actual = set(record.actual_labels)
+        predicted = set(record.predicted_labels) if record.valid_output else set()
+        for label in predicted - actual:
+            counts[("false_positive", label)] += 1
+        for label in actual - predicted:
+            counts[("false_negative", label)] += 1
     return [
-        {"actual": actual, "predicted": predicted, "count": count}
-        for (actual, predicted), count in counts.most_common(12)
+        {"pattern": pattern, "label": label, "count": count}
+        for (pattern, label), count in counts.most_common(24)
     ]
 
 
@@ -330,22 +326,20 @@ def _prediction_examples(
     examples: list[dict[str, Any]] = []
     for record in records:
         row = rows_by_id[record.arxiv_id]
-        predicted = record.predicted_label if record.valid_output else INVALID_LABEL
         examples.append(
             {
                 "arxiv_id": record.arxiv_id,
-                "actual": record.actual_label,
-                "predicted": predicted,
-                "correct": record.correct,
+                "actual_labels": list(record.actual_labels),
+                "predicted_labels": list(record.predicted_labels),
+                "exact_match": record.exact_match,
                 "valid_output": record.valid_output,
                 "abstract_excerpt": row.abstract[:400],
-                "secondary_categories": row.categories.split()[1:],
                 "reason": record.reason,
                 "parse_error": record.parse_error,
             }
         )
-    correct = [item for item in examples if item["correct"]][:12]
-    incorrect = [item for item in examples if not item["correct"]][:24]
+    correct = [item for item in examples if item["exact_match"]][:12]
+    incorrect = [item for item in examples if not item["exact_match"]][:24]
     return [*correct, *incorrect]
 
 
@@ -360,9 +354,8 @@ def _write_artifacts(
     labels = list(TARGET_CATEGORIES)
     report = cast(dict[str, Any], summary["classification_report"])
     _write_class_metrics(report, labels, paths.llm_class_metrics(split))
-    columns, matrix = _confusion_counts(records, labels)
-    _write_confusion_csv(columns, matrix, labels, paths.llm_confusion_matrix(split))
-    _plot_confusion(columns, matrix, labels, paths.llm_confusion_figure(split))
+    _write_label_error_csv(records, labels, paths.llm_label_errors(split))
+    _plot_label_error_counts(records, paths.llm_label_error_figure(split))
     _write_json(paths.llm_error_patterns(split), _error_patterns(records))
     _write_json(
         paths.llm_prediction_examples(split),
@@ -463,13 +456,13 @@ def evaluate_llm_split(
         "split": split,
         "row_count": len(rows),
         "model": active_client.model,
-        "transport": _transport_name(active_client),
+        "source": "Configured API",
         "prompt_version": prompt.version,
         "prompt_hash": prompt.prompt_hash,
         "input_contract": "Abstract text only; no titles, authors, source labels, or answers.",
         "selection_policy": (
-            "taxonomy_json_v1 is frozen before held-out test evaluation; test is not used for "
-            "prompt tuning."
+            "taxonomy_multilabel_json_v2 is frozen before held-out test evaluation; "
+            "test is not used for prompt tuning."
         ),
         "labels": labels,
         **metric_values,
@@ -492,17 +485,16 @@ def predict_llm_text(
         parsed = parse_taxonomy_output(response.content)
         return {
             "model": active_client.model,
-            "transport": _transport_name(active_client),
+            "source": "Configured API",
             "prompt_version": prompt.version,
             "prompt_hash": prompt.prompt_hash,
-            "label": parsed.label,
-            "category_name": CATEGORY_NAMES[parsed.label] if parsed.label else None,
+            "labels": list(parsed.labels),
+            "category_names": {label: CATEGORY_NAMES[label] for label in parsed.labels},
             "valid_output": parsed.valid_output,
             "reason": parsed.reason,
             "error": parsed.error,
             "latency_seconds": response.latency_seconds,
             "usage": response.usage.model_dump(),
-            "response_id": response.response_id,
         }
     finally:
         if owned_client is not None:

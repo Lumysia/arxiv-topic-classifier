@@ -50,7 +50,7 @@ def _stratified_audit_sample(
     rng = random.Random(seed)
     sampled: list[DatasetRow] = []
     for index, label in enumerate(labels):
-        candidates = [row for row in development_rows if row.label == label]
+        candidates = [row for row in development_rows if label in row.labels]
         wanted = per_class + int(index < remainder)
         if len(candidates) < wanted:
             raise ValueError(f"Not enough development rows for LLM audit label {label}.")
@@ -147,10 +147,9 @@ def _audit_outcome(
 ) -> str:
     if not valid_output or suggested_label is None:
         return "invalid_rejected"
-    if suggested_label == row.label:
+    if suggested_label in row.labels:
         return "agreement"
-    secondary = set(row.categories.split()[1:])
-    if suggested_label in secondary or row.label in alternative_labels or ambiguity_flag is True:
+    if any(label in alternative_labels for label in row.labels) or ambiguity_flag is True:
         return "plausible_alternative_cross_list_ambiguity"
     return "human_review_candidate"
 
@@ -168,7 +167,7 @@ def _classify_audit_row(row: DatasetRow, client: LLMClient) -> _CompletedAuditRo
         model=client.model,
         prompt_version=prompt.version,
         prompt_hash=prompt.prompt_hash,
-        source_primary_label=row.label,
+        source_primary_label=row.categories.split()[0],
         source_all_categories=row.categories.split(),
         suggested_label=suggested,
         alternative_labels=alternatives,
@@ -179,7 +178,6 @@ def _classify_audit_row(row: DatasetRow, client: LLMClient) -> _CompletedAuditRo
         outcome=_audit_outcome(row, suggested, alternatives, ambiguity, valid_output),
         latency_seconds=response.latency_seconds,
         usage=response.usage,
-        response_id=response.response_id,
     )
     return _CompletedAuditRow(record=record, raw_response=response.content)
 
@@ -267,7 +265,7 @@ def run_llm_audit(
             "and never enter held-out test evaluation."
         ),
         "model": active_client.model,
-        "transport": _transport_name(active_client),
+        "source": "Configured API",
         "prompt_version": prompt.version,
         "prompt_hash": prompt.prompt_hash,
         "input_contract": "Abstract text only; no titles, authors, source labels, or test rows.",
@@ -311,11 +309,6 @@ def run_llm_audit(
     _write_json(paths.llm_audit_summary, summary)
     _write_jsonl(paths.llm_label_audit, [record.model_dump() for record in ordered_records])
     return summary
-
-
-def _transport_name(client: LLMClient) -> str:
-    value = getattr(client, "transport", None)
-    return value if isinstance(value, str) else "openai-compatible"
 
 
 def _token_totals(records: list[LLMAuditRecord]) -> dict[str, int | None]:
