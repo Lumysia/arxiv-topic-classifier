@@ -1,0 +1,76 @@
+{
+  "format_version": 1,
+  "prompt_version": "taxonomy_multilabel_json_v2",
+  "prompt_hash": "88a13952beb48046",
+  "entries": [
+    {
+      "normalized_abstract": "We consider the question of when the operation of contact surgery with positive surgery coefficient, along a knot $K$ in a contact 3-manifold $Y$, gives rise to a weakly fillable contact structure. We show that this happens if and only if $Y$ itself is weakly fillable, and $K$ is isotopic to the boundary of a properly embedded symplectic disk inside a filling of $Y$. Moreover, if $Y'$ is a contact",
+      "abstract_hash": "0bc1366dd27cd82cf58c0e44de36aa3a9f257864e827f1798243918c289cfd6e",
+      "labels": [
+        "math.GT",
+        "math.SG"
+      ],
+      "reason": "The abstract studies contact surgery and weak symplectic fillability in contact 3-manifolds, involving symplectic disks and knot topology.",
+      "valid_output": true,
+      "parse_error": null,
+      "model": "OpenAI / GPT 5.6 Sol",
+      "source": "Offline cache",
+      "latency_seconds": 6.510839626018424,
+      "usage": {
+        "input_tokens": 24607,
+        "output_tokens": 50,
+        "total_tokens": 24783,
+        "reasoning_tokens": 126,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "reported_cost_usd": 0.0
+      }
+    },
+    {
+      "normalized_abstract": "The integration of multicarrier modulation and multiple-input-multiple-output (MIMO) is critical for reliable transmission of wireless signals in complex environments, which significantly improve spectrum efficiency. Existing studies have shown that popular orthogonal time frequency space (OTFS) and affine frequency division multiplexing (AFDM) offer significant advantages over orthogonal frequenc",
+      "abstract_hash": "e2835f24df520e2d4c245bc8775cbe4648bdcc2ae24afd9f57b15bb30185b638",
+      "labels": [
+        "cs.IT",
+        "cs.NI",
+        "eess.SP"
+      ],
+      "reason": "The abstract concerns wireless signal transmission using multicarrier modulation, MIMO, OTFS, and AFDM, directly involving communications signal processing, spectral efficiency, and wireless networking.",
+      "valid_output": true,
+      "parse_error": null,
+      "model": "OpenAI / GPT 5.6 Sol",
+      "source": "Offline cache",
+      "latency_seconds": 5.668428339005914,
+      "usage": {
+        "input_tokens": 24578,
+        "output_tokens": 57,
+        "total_tokens": 24635,
+        "reasoning_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "reported_cost_usd": 0.0
+      }
+    },
+    {
+      "normalized_abstract": "A computer model of \"a sense of humour\" suggested previously [arXiv:0711.2058,0711.2061], relating the humorous effect with a specific malfunction in information processing, is given in somewhat different exposition. Psychological aspects of humour are elaborated more thoroughly. The mechanism of laughter is formulated on the more general level. Detailed discussion is presented for the higher leve",
+      "abstract_hash": "e44cde85d0be1dd2b6f63a6d1814d6fea6154d94f4c32c9e80c0e6ffadb33c21",
+      "labels": [
+        "cs.AI"
+      ],
+      "reason": "The abstract presents a computer model of humour as an information-processing mechanism, including a proposed malfunction and a generalized mechanism for laughter.",
+      "valid_output": true,
+      "parse_error": null,
+      "model": "OpenAI / GPT 5.6 Sol",
+      "source": "Offline cache",
+      "latency_seconds": 8.321198659949005,
+      "usage": {
+        "input_tokens": 24590,
+        "output_tokens": 42,
+        "total_tokens": 24845,
+        "reasoning_tokens": 213,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "reported_cost_usd": 0.0
+      }
+    }
+  ]
+}

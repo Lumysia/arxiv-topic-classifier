@@ -34,8 +34,16 @@ kaggle.json
 
 # Data, models, and generated artifacts
 data/
-models/
-artifacts/
+models/**
+!models/
+!models/arxiv_topic_pipeline.joblib
+!models/arxiv_topic_pipeline.manifest.json
+artifacts/**
+!artifacts/
+!artifacts/data_profile.json
+!artifacts/demo_llm_cache.json
+!artifacts/demo_selection.json
+!artifacts/metrics.json
 archives/
 dist/
 build/
@@ -56,6 +64,7 @@ RETURN_*
 
 # Local launchers, QA tooling, and browser/PDF automation
 *.command
+!run_demo.command
 tools/
 browser-qa/
 playwright-report/
